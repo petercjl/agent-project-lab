@@ -469,6 +469,36 @@ try {
   const errors: string[] = [];
   pageUI.on("pageerror", (e) => errors.push(e.message));
   await pageUI.goto("http://127.0.0.1:4318");
+  const projectButton = pageUI.getByRole("button", {
+    name: "▣ " + p.name,
+    exact: true,
+  });
+  await projectButton.click();
+  await projectButton.hover();
+  const hoverColors = await projectButton.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { color: style.color, background: style.backgroundColor };
+  });
+  assert.notEqual(hoverColors.color, hoverColors.background);
+  assert.notEqual(hoverColors.background, "rgba(0, 0, 0, 0)");
+  checks += 2;
+  const resizeHandle = pageUI.getByRole("separator", {
+    name: "调整项目目录宽度",
+  });
+  const originalWidth = (await pageUI.locator("aside").boundingBox())!.width;
+  await resizeHandle.focus();
+  await resizeHandle.press("ArrowRight");
+  await pageUI.waitForTimeout(200);
+  const resizedWidth = (await pageUI.locator("aside").boundingBox())!.width;
+  assert.equal(resizedWidth, originalWidth + 10);
+  await pageUI.getByRole("button", { name: "收起项目目录" }).click();
+  await pageUI.waitForTimeout(200);
+  assert.equal(await pageUI.locator(".app.sidebar-collapsed").count(), 1);
+  assert.equal((await pageUI.locator("aside").boundingBox())!.width, 64);
+  await pageUI.getByRole("button", { name: "展开项目目录" }).click();
+  await pageUI.waitForTimeout(200);
+  assert.equal((await pageUI.locator("aside").boundingBox())!.width, resizedWidth);
+  checks += 4;
   await pageUI.getByLabel("项目排序字段").selectOption("name");
   await pageUI.getByLabel("切换排序方向").click();
   await pageUI

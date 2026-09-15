@@ -33,7 +33,16 @@ function App() {
     ),
     [sortDirection, SORT_DIRECTION] = useS(
       localStorage.getItem("project-sort-direction") || "desc",
-    );
+    ),
+    [sidebarCollapsed, SIDEBAR_COLLAPSED] = useS(
+      localStorage.getItem("sidebar-collapsed") === "true",
+    ),
+    [sidebarWidth, SIDEBAR_WIDTH] = useS(() => {
+      const saved = Number(localStorage.getItem("sidebar-width"));
+      return Number.isFinite(saved) && saved >= 190 && saved <= 420
+        ? saved
+        : 226;
+    });
   async function api(
     url: string,
     method = "GET",
@@ -109,6 +118,10 @@ function App() {
     localStorage.setItem("project-sort-by", sortBy);
     localStorage.setItem("project-sort-direction", sortDirection);
   }, [sortBy, sortDirection]);
+  useE(() => {
+    localStorage.setItem("sidebar-collapsed", String(sidebarCollapsed));
+    localStorage.setItem("sidebar-width", String(sidebarWidth));
+  }, [sidebarCollapsed, sidebarWidth]);
   useE(() => {
     if (pid && tab === "Wiki")
       api(`/projects/${pid}/wiki?path=${encodeURIComponent(page)}`)
@@ -242,6 +255,24 @@ function App() {
     D(null);
     DIR(false);
   }
+  function resizeSidebar(event: React.PointerEvent<HTMLDivElement>) {
+    if (sidebarCollapsed) return;
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = sidebarWidth;
+    document.body.classList.add("resizing-sidebar");
+    const move = (moveEvent: PointerEvent) =>
+      SIDEBAR_WIDTH(
+        Math.min(420, Math.max(190, startWidth + moveEvent.clientX - startX)),
+      );
+    const stop = () => {
+      document.body.classList.remove("resizing-sidebar");
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+  }
   function download(name: string, data: any) {
     const u = URL.createObjectURL(
       new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }),
@@ -315,8 +346,19 @@ function App() {
   if (!s)
     return <div className="loading">身份已验证 · 正在读取项目…{error}</div>;
   return (
-    <div className="app">
+    <div
+      className={`app ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}
+      style={{ "--sidebar-width": `${sidebarWidth}px` } as React.CSSProperties}
+    >
       <aside>
+        <button
+          className="sidebar-toggle"
+          aria-label={sidebarCollapsed ? "展开项目目录" : "收起项目目录"}
+          title={sidebarCollapsed ? "展开项目目录" : "收起项目目录"}
+          onClick={() => SIDEBAR_COLLAPSED(!sidebarCollapsed)}
+        >
+          {sidebarCollapsed ? "›" : "‹"}
+        </button>
         <div className="brand">
           <b>◈</b>
           <span>
@@ -435,6 +477,28 @@ function App() {
             {auth.mode === "dingtalk" ? auth.name : "数据保存在此电脑"}
           </small>
         </div>
+        <div
+          className="sidebar-resizer"
+          role="separator"
+          aria-label="调整项目目录宽度"
+          aria-orientation="vertical"
+          aria-valuemin={190}
+          aria-valuemax={420}
+          aria-valuenow={sidebarWidth}
+          tabIndex={sidebarCollapsed ? -1 : 0}
+          onPointerDown={resizeSidebar}
+          onKeyDown={(event) => {
+            if (event.key !== "ArrowLeft" && event.key !== "ArrowRight")
+              return;
+            event.preventDefault();
+            SIDEBAR_WIDTH((width) =>
+              Math.min(
+                420,
+                Math.max(190, width + (event.key === "ArrowRight" ? 10 : -10)),
+              ),
+            );
+          }}
+        />
       </aside>
       <main>
         <header>
