@@ -26,6 +26,7 @@ import {
 } from "./domain.ts";
 const app = express();
 app.use(express.json({ limit: "100mb" }));
+app.use(express.urlencoded({ extended: false }));
 app.use("/api", (req, res, next) => {
   const origin = req.headers.origin;
   const expectedOrigin = `${req.protocol}://${req.headers.host}`;
@@ -76,6 +77,9 @@ route("get", "/api/health", async () => {
   return {
     status: "ready",
     version: "0.1.0",
+    apiVersion: "1",
+    environment: process.env.APP_ENV || "development",
+    instanceId: process.env.INSTANCE_ID || "local-development",
     commit: process.env.APP_COMMIT || "development",
     storage: "PostgreSQL + Markdown",
     notifications: "local",
@@ -115,17 +119,23 @@ route("get", "/api/capabilities", () => ({
             authConfig().corpId,
           ),
           browser: "DingTalk OAuth 2.0 authorization code",
-          agent: authConfig().agentToken ? "bearer-token" : "not-configured",
+          agent: "personal-cli-token",
+          legacyAgentToken: authConfig().agentToken
+            ? "configured"
+            : "not-configured",
         }
       : {
           mode: "development",
           warning: "仅用于自动测试；x-actor 是角色模拟",
         },
 }));
-route("post", "/api/projects", (req) =>
-  mutate(req, async (s: any, who: string) => {
+async function createProjectRequest(req: any, detailed = false) {
+  if (req.body.template && req.body.template !== "ecommerce-v1")
+    throw new Fault("VALIDATION", "当前只支持模板 ecommerce-v1");
+  return mutate(req, async (s: any, who: string) => {
     const p = makeProject(s, req.body);
-    for (const t of s.tasks.filter((x: any) => x.projectId === p.id)) {
+    const tasks = s.tasks.filter((x: any) => x.projectId === p.id);
+    for (const t of tasks) {
       const content = `# ${t.title}\n\n## 目标\n\n${p.goal}\n\n## 输入与依据\n\n## 分析结论\n\n## 下一步\n`;
       await writeFile(p.id, t.wikiPath, content);
       s.pages.push({
@@ -154,9 +164,57 @@ route("post", "/api/projects", (req) =>
       `id: ${p.id}\nname: ${JSON.stringify(p.name)}\ntemplate: ecommerce-v1\n`,
     );
     audit(s, who, "project.created", p.id, { name: p.name });
-    return p;
-  }),
+    if (!detailed) return p;
+    return {
+      project: p,
+      tasks: {
+        count: tasks.length,
+        items: tasks.map((task: any) => ({
+          id: task.id,
+          title: task.title,
+          stage: task.stage,
+          owner: task.owner,
+          status: task.status,
+          dependencies: task.dependencies,
+          wikiPath: task.wikiPath,
+        })),
+      },
+      wiki: {
+        count: tasks.length + 1,
+        paths: ["wiki/index.md", ...tasks.map((task: any) => task.wikiPath)],
+      },
+      audit: { event: "project.created", actor: who },
+    };
+  });
+}
+route("post", "/api/projects", (req) => createProjectRequest(req));
+route("post", "/api/v1/projects", (req) =>
+  createProjectRequest(req, true),
 );
+route("get", "/api/v1/projects/:id", async (req) => {
+  const s: any = await read();
+  const project = get(s.projects, req.params.id, "项目");
+  const tasks = s.tasks.filter((task: any) => task.projectId === project.id);
+  return {
+    project,
+    tasks: {
+      count: tasks.length,
+      items: tasks.map((task: any) => ({
+        id: task.id,
+        title: task.title,
+        stage: task.stage,
+        owner: task.owner,
+        status: task.status,
+        dependencies: task.dependencies,
+        wikiPath: task.wikiPath,
+      })),
+    },
+    wiki: {
+      count: tasks.length + 1,
+      paths: ["wiki/index.md", ...tasks.map((task: any) => task.wikiPath)],
+    },
+  };
+});
 route("post", "/api/members", (req) =>
   mutate(req, (s: any, who: string) => {
     const m = {

@@ -107,6 +107,29 @@ async function sessionIdentity(req: Request) {
   return { kind: "dingtalk", ...result.rows[0] };
 }
 
+async function apiTokenIdentity(raw: string) {
+  if (!raw) return null;
+  const result = await pool.query(
+    `SELECT u.id,u.name,u.avatar_url AS "avatarUrl",u.member_id AS "memberId",
+            u.union_id AS "unionId",u.open_id AS "openId",u.corp_id AS "corpId",
+            t.expires_at AS "expiresAt",t.client_name AS "clientName"
+       FROM api_tokens t JOIN auth_users u ON u.id=t.user_id
+      WHERE t.token_hash=$1 AND t.revoked_at IS NULL AND t.expires_at>now()`,
+    [hash(raw)],
+  );
+  if (!result.rowCount) return null;
+  await pool.query(
+    "UPDATE api_tokens SET last_used_at=now() WHERE token_hash=$1",
+    [hash(raw)],
+  );
+  return { kind: "cli", ...result.rows[0] };
+}
+
+function bearerToken(req: Request) {
+  const authorization = String(req.headers.authorization || "");
+  return authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
+}
+
 async function requestJson(url: string, init: RequestInit, label: string) {
   let response: globalThis.Response;
   try {
@@ -380,6 +403,165 @@ export function installAuth(app: Express) {
     }
   });
 
+  app.post("/api/auth/cli/start", async (req, res, next) => {
+    try {
+      const verifierHash = String(req.body.verifierHash || "");
+      if (!/^[a-f0-9]{64}$/.test(verifierHash))
+        throw new Fault("VALIDATION", "无效的 CLI 授权校验值");
+      const clientName = String(req.body.clientName || "procli").slice(0, 100);
+      const requestId = randomBytes(24).toString("base64url");
+      await pool.query(
+        `INSERT INTO cli_auth_requests(request_id,verifier_hash,client_name,expires_at)
+         VALUES($1,$2,$3,now()+interval '10 minutes')`,
+        [requestId, verifierHash, clientName],
+      );
+      const origin = `${req.protocol}://${req.get("host")}`;
+      res.json({
+        ok: true,
+        data: {
+          requestId,
+          verificationUrl: `${origin}/api/auth/cli/authorize?request=${encodeURIComponent(requestId)}`,
+          intervalMs: 1500,
+          expiresIn: 600,
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/auth/cli/authorize", async (req, res, next) => {
+    try {
+      const requestId = String(req.query.request || "");
+      if (!/^[A-Za-z0-9_-]{20,80}$/.test(requestId))
+        throw new Fault("AUTH_REQUEST_INVALID", "CLI 授权请求无效", 400);
+      const found = await pool.query(
+        "SELECT status,expires_at FROM cli_auth_requests WHERE request_id=$1 AND expires_at>now()",
+        [requestId],
+      );
+      if (!found.rowCount)
+        throw new Fault("AUTH_REQUEST_EXPIRED", "CLI 授权请求已失效", 410);
+      const identity = await sessionIdentity(req);
+      if (!identity) {
+        const returnTo = `/api/auth/cli/authorize?request=${encodeURIComponent(requestId)}`;
+        return res.redirect(
+          `/api/auth/dingtalk/start?returnTo=${encodeURIComponent(returnTo)}`,
+        );
+      }
+      if (found.rows[0].status === "approved")
+        return res.type("html").send("<!doctype html><meta charset=utf-8><title>procli 已授权</title><h1>procli 已授权</h1><p>可以返回终端继续使用。</p>");
+      res.type("html").send(`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>授权 procli</title><style>body{font-family:system-ui;max-width:520px;margin:12vh auto;padding:24px;color:#172033}button{padding:12px 24px;background:#2563eb;color:white;border:0;border-radius:8px;font-size:16px}</style><h1>授权 procli</h1><p>当前钉钉身份：${String(identity.name).replace(/[<>&"]/g, "")}</p><p>授权后，procli 将以你的项目成员身份操作所选环境。</p><form method="post"><input type="hidden" name="request" value="${requestId}"><button type="submit">确认授权</button></form></html>`);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/auth/cli/authorize", async (req, res, next) => {
+    try {
+      const requestId = String(req.body.request || "");
+      const identity = await sessionIdentity(req);
+      if (!identity) throw new Fault("AUTH_REQUIRED", "请先使用钉钉账号登录", 401);
+      const result = await pool.query(
+        `UPDATE cli_auth_requests SET user_id=$2,status='approved'
+          WHERE request_id=$1 AND status='pending' AND expires_at>now()
+          RETURNING request_id`,
+        [requestId, identity.id],
+      );
+      if (!result.rowCount)
+        throw new Fault("AUTH_REQUEST_EXPIRED", "CLI 授权请求已失效", 410);
+      res.type("html").send("<!doctype html><meta charset=utf-8><title>procli 授权成功</title><h1>授权成功</h1><p>可以关闭此页面并返回终端。</p>");
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/auth/cli/poll", async (req, res, next) => {
+    const client = await pool.connect();
+    try {
+      const requestId = String(req.body.requestId || "");
+      const verifier = String(req.body.verifier || "");
+      await client.query("BEGIN");
+      const found = await client.query(
+        `SELECT verifier_hash,client_name,user_id,status,expires_at
+           FROM cli_auth_requests WHERE request_id=$1 FOR UPDATE`,
+        [requestId],
+      );
+      if (!found.rowCount || found.rows[0].expires_at <= new Date())
+        throw new Fault("AUTH_REQUEST_EXPIRED", "CLI 授权请求已失效", 410);
+      if (!equal(hash(verifier), String(found.rows[0].verifier_hash)))
+        throw new Fault("AUTH_REQUEST_INVALID", "CLI 授权校验失败", 403);
+      if (found.rows[0].status !== "approved" || !found.rows[0].user_id) {
+        await client.query("COMMIT");
+        return res.status(202).json({ ok: true, data: { status: "pending" } });
+      }
+      const raw = `pro_${randomBytes(36).toString("base64url")}`;
+      const expiresAt = new Date(Date.now() + 90 * 86400 * 1000);
+      const user = await client.query(
+        `SELECT name,member_id AS "memberId" FROM auth_users WHERE id=$1`,
+        [found.rows[0].user_id],
+      );
+      if (!user.rowCount)
+        throw new Fault("AUTH_REQUIRED", "授权用户不存在", 401);
+      await client.query(
+        `INSERT INTO api_tokens(token_hash,user_id,client_name,expires_at)
+         VALUES($1,$2,$3,$4)`,
+        [hash(raw), found.rows[0].user_id, found.rows[0].client_name, expiresAt],
+      );
+      await client.query("DELETE FROM cli_auth_requests WHERE request_id=$1", [
+        requestId,
+      ]);
+      await client.query("COMMIT");
+      res.json({
+        ok: true,
+        data: {
+          token: raw,
+          expiresAt: expiresAt.toISOString(),
+          member: {
+            id: user.rows[0].memberId,
+            name: user.rows[0].name,
+          },
+        },
+      });
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => {});
+      next(error);
+    } finally {
+      client.release();
+    }
+  });
+
+  app.get("/api/auth/cli/status", async (req, res, next) => {
+    try {
+      const identity = await apiTokenIdentity(bearerToken(req));
+      if (!identity) throw new Fault("AUTH_REQUIRED", "procli 尚未登录或凭证已失效", 401);
+      res.json({
+        ok: true,
+        data: {
+          authenticated: true,
+          member: { id: identity.memberId, name: identity.name },
+          clientName: identity.clientName,
+          expiresAt: identity.expiresAt,
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/auth/cli/revoke", async (req, res, next) => {
+    try {
+      const raw = bearerToken(req);
+      const identity = await apiTokenIdentity(raw);
+      if (!identity) throw new Fault("AUTH_REQUIRED", "procli 尚未登录或凭证已失效", 401);
+      await pool.query("UPDATE api_tokens SET revoked_at=now() WHERE token_hash=$1", [
+        hash(raw),
+      ]);
+      res.json({ ok: true, data: { revoked: true } });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.use("/api", async (req: any, res: Response, next: NextFunction) => {
     try {
       if (
@@ -396,15 +578,17 @@ export function installAuth(app: Express) {
         };
         return next();
       }
-      const authorization = String(req.headers.authorization || "");
-      const bearer = authorization.startsWith("Bearer ")
-        ? authorization.slice(7)
-        : "";
+      const bearer = bearerToken(req);
       if (bearer && cfg.agentToken && equal(bearer, cfg.agentToken)) {
         req.auth = {
           kind: "agent",
           memberId: String(req.headers["x-actor"] || "agent"),
         };
+        return next();
+      }
+      const cliIdentity = await apiTokenIdentity(bearer);
+      if (cliIdentity) {
+        req.auth = cliIdentity;
         return next();
       }
       const identity = await sessionIdentity(req);

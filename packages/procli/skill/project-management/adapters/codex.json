@@ -1,0 +1,30 @@
+{
+  "schema": "portable-skill-adapter",
+  "schema_version": "1.0.0",
+  "platform": "codex",
+  "mappings": [
+    {
+      "capability_id": "project.service.project.create",
+      "implementation": {
+        "kind": "stable-cli",
+        "discovery": "Resolve procli from PATH and verify it with procli version and procli capabilities --json.",
+        "execution": "Run procli project create with the selected Profile, one idempotency key, preview and required confirmation.",
+        "normalization": "Use the procli JSON envelope without reinterpretation."
+      },
+      "features": [
+        "profile_selection",
+        "target_identity_verification",
+        "dry_run",
+        "production_confirmation",
+        "idempotent_write",
+        "post_write_readback",
+        "structured_json"
+      ],
+      "status": "tested",
+      "permissions": ["Network access to the selected service", "Permission to create a project"],
+      "normalization": "Use the procli JSON envelope without reinterpretation.",
+      "tested_date": "2026-09-15",
+      "evidence": ["Codex resolved the installed procli 0.1.0 entry point, verified the local Profile and authenticated DingTalk identity, previewed and created one local project, and received matching write-after-readback counts for one project, seven tasks, and eight Wiki paths."]
+    }
+  ]
+}

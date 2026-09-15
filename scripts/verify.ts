@@ -1,6 +1,8 @@
 import { spawn, execFileSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import assert from "node:assert/strict";
 import pg from "pg";
 import { chromium } from "playwright";
@@ -243,41 +245,65 @@ try {
   );
   checks++;
   const rev = (await ok("/state")).revision;
+  const procliHome = await fs.mkdtemp(path.join(os.tmpdir(), "procli-verify-"));
+  const procliConfig = path.join(procliHome, "config.json");
+  execFileSync(
+    process.execPath,
+    [
+      "packages/procli/bin/procli.mjs",
+      "profile",
+      "add",
+      "local",
+      "--url",
+      "http://127.0.0.1:4318",
+      "--environment",
+      "development",
+    ],
+    { encoding: "utf8", env: { ...process.env, PROCLI_CONFIG_PATH: procliConfig } },
+  );
   const dry = JSON.parse(
     execFileSync(
       process.execPath,
       [
-        "bin/projectctl.mjs",
+        "packages/procli/bin/procli.mjs",
+        "--profile",
+        "local",
         "project",
         "create",
         "--name",
         "dry",
         "--dry-run",
-        "--url",
-        "http://127.0.0.1:4318",
       ],
-      { encoding: "utf8" },
+      { encoding: "utf8", env: { ...process.env, PROCLI_CONFIG_PATH: procliConfig } },
     ),
   );
   assert.equal(dry.data.dryRun, true);
   assert.equal((await ok("/state")).revision, rev);
   checks++;
-  const summary = JSON.parse(
+  const createdByCli = JSON.parse(
     execFileSync(
       process.execPath,
       [
-        "bin/projectctl.mjs",
+        "packages/procli/bin/procli.mjs",
+        "--profile",
+        "local",
         "project",
-        "summary",
-        "--id",
-        p.id,
-        "--url",
-        "http://127.0.0.1:4318",
+        "create",
+        "--name",
+        `procli 验收 ${Date.now()}`,
+        "--goal",
+        "验证本地 Profile 创建项目",
+        "--idempotency-key",
+        `procli-verify-${Date.now()}`,
       ],
-      { encoding: "utf8" },
+      { encoding: "utf8", env: { ...process.env, PROCLI_CONFIG_PATH: procliConfig } },
     ),
   );
-  assert.equal(summary.data.counts["已完成"], 1);
+  assert.equal(createdByCli.ok, true);
+  assert.equal(createdByCli.data.target.profile, "local");
+  assert.equal(createdByCli.data.tasks.count, 7);
+  assert.equal(createdByCli.data.wiki.count, 8);
+  await fs.rm(procliHome, { recursive: true, force: true });
   checks++;
   browser = await chromium.launch({ headless: true });
   const pageUI = await browser.newPage({

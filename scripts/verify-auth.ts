@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { setTimeout as delay } from "node:timers/promises";
 import assert from "node:assert/strict";
@@ -166,6 +167,95 @@ try {
     401,
   );
   checks += 3;
+
+  const verifier = "device-verifier-for-auth-test";
+  const verifierHash = createHash("sha256").update(verifier).digest("hex");
+  const cliStart = await fetch(`${base}/api/auth/cli/start`, {
+    method: "POST",
+    headers: { "content-type": "application/json", origin: base },
+    body: JSON.stringify({ verifierHash, clientName: "procli/test" }),
+  }).then((response) => response.json());
+  assert.equal(cliStart.ok, true);
+  const requestId = cliStart.data.requestId;
+  assert.equal(
+    cliStart.data.verificationUrl,
+    `${base}/api/auth/cli/authorize?request=${encodeURIComponent(requestId)}`,
+  );
+  const authorizePage = await fetch(cliStart.data.verificationUrl, {
+    headers: { cookie: sessionCookie },
+  });
+  assert.equal(authorizePage.status, 200);
+  assert.match(await authorizePage.text(), /确认授权/);
+  checks += 2;
+
+  const authorize = await fetch(`${base}/api/auth/cli/authorize`, {
+    method: "POST",
+    headers: {
+      cookie: sessionCookie,
+      origin: base,
+      "content-type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({ request: requestId }),
+  });
+  assert.equal(authorize.status, 200);
+  checks++;
+
+  const wrongPoll = await fetch(`${base}/api/auth/cli/poll`, {
+    method: "POST",
+    headers: { "content-type": "application/json", origin: base },
+    body: JSON.stringify({ requestId, verifier: "wrong" }),
+  });
+  const wrongPollBody = await wrongPoll.json();
+  assert.equal(wrongPoll.status, 403, JSON.stringify(wrongPollBody));
+  const cliPoll = await fetch(`${base}/api/auth/cli/poll`, {
+    method: "POST",
+    headers: { "content-type": "application/json", origin: base },
+    body: JSON.stringify({ requestId, verifier }),
+  }).then((response) => response.json());
+  assert.equal(cliPoll.ok, true);
+  assert.equal(cliPoll.data.member.id, "supervisor");
+  const cliToken = cliPoll.data.token;
+  assert.match(cliToken, /^pro_/);
+  checks += 2;
+
+  const cliStatus = await fetch(`${base}/api/auth/cli/status`, {
+    headers: { authorization: `Bearer ${cliToken}` },
+  }).then((response) => response.json());
+  assert.equal(cliStatus.data.authenticated, true);
+  assert.equal(cliStatus.data.member.id, "supervisor");
+  assert.equal(
+    (
+      await fetch(`${base}/api/state`, {
+        headers: { authorization: `Bearer ${cliToken}` },
+      })
+    ).status,
+    200,
+  );
+  checks += 2;
+
+  assert.equal(
+    (
+      await fetch(`${base}/api/auth/cli/revoke`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${cliToken}`,
+          origin: base,
+          "content-type": "application/json",
+        },
+        body: "{}",
+      })
+    ).status,
+    200,
+  );
+  assert.equal(
+    (
+      await fetch(`${base}/api/state`, {
+        headers: { authorization: `Bearer ${cliToken}` },
+      })
+    ).status,
+    401,
+  );
+  checks += 2;
 
   const invalidState = await fetch(
     `${base}/api/auth/dingtalk/callback?authCode=valid-code&state=wrong`,

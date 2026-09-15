@@ -688,11 +688,10 @@ function App() {
                 <div className="callout">
                   <h3>Agent 与人共用同一套项目数据</h3>
                   <p>
-                    通过 projectctl 查询任务、读取
-                    Wiki、登记运行、写入交付物并提交审核。此页面记录真实调用，不会自动启动大模型。
+                    通过 procli 的 Profile 选择本地开发或 NAS 生产服务；首个正式能力用于创建包含任务与 Wiki 的商品项目。
                   </p>
-                  <code>projectctl capabilities</code>
-                  <code>projectctl project summary --id {pid}</code>
+                  <code>procli profile current --json</code>
+                  <code>procli project create --name 商品项目 --goal 明确目标 --dry-run --json</code>
                 </div>
                 <h2>执行记录</h2>
                 {s.runs

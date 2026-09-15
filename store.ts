@@ -39,7 +39,32 @@ export async function init() {
   await pool.query(
     "CREATE INDEX IF NOT EXISTS auth_sessions_expiry_idx ON auth_sessions(expires_at)",
   );
+  await pool.query(`CREATE TABLE IF NOT EXISTS cli_auth_requests (
+    request_id text PRIMARY KEY,
+    verifier_hash char(64) NOT NULL,
+    client_name text NOT NULL,
+    user_id text REFERENCES auth_users(id) ON DELETE CASCADE,
+    status text NOT NULL DEFAULT 'pending',
+    created_at timestamptz NOT NULL DEFAULT now(),
+    expires_at timestamptz NOT NULL
+  )`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS api_tokens (
+    token_hash char(64) PRIMARY KEY,
+    user_id text NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+    client_name text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    last_used_at timestamptz NOT NULL DEFAULT now(),
+    expires_at timestamptz NOT NULL,
+    revoked_at timestamptz
+  )`);
+  await pool.query(
+    "CREATE INDEX IF NOT EXISTS api_tokens_user_idx ON api_tokens(user_id)",
+  );
   await pool.query("DELETE FROM auth_sessions WHERE expires_at <= now()");
+  await pool.query("DELETE FROM cli_auth_requests WHERE expires_at <= now()");
+  await pool.query(
+    "DELETE FROM api_tokens WHERE expires_at <= now() OR revoked_at IS NOT NULL",
+  );
 }
 export async function read() {
   return (await pool.query("SELECT body FROM lab_state WHERE id=1")).rows[0]

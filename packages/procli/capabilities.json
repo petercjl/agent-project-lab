@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "1",
+  "name": "procli",
+  "version": "0.1.0",
+  "defaultProfile": "nas",
+  "capabilities": [
+    {
+      "id": "project.create",
+      "command": "procli project create",
+      "effect": "write",
+      "risk": "medium",
+      "requiredInputs": ["name"],
+      "optionalInputs": ["goal", "template", "mode", "profile", "idempotencyKey"],
+      "supports": ["dryRun", "idempotency", "targetVerification", "postWriteReadback"],
+      "productionConfirmation": true
+    }
+  ]
+}

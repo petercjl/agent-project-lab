@@ -1,6 +1,6 @@
 # 项目实验台 · Agent Project Lab
 
-本地商品项目管理应用：项目看板 + Markdown Wiki + Agent CLI。
+Agent 驱动的商品项目管理应用：项目看板 + Markdown Wiki + `procli`。
 
 页面入口：<http://127.0.0.1:4317>
 
@@ -12,7 +12,7 @@
 - Agent 运行登记、输入输出与质量记录；项目活动审计；审核与下游交接的本地通知。
 - 人工/Agent 耗时记录及同事项平均耗时对比，人工纠正耗时计入总量。
 - 项目完整 JSON 导出与新副本恢复，含任务、Wiki、附件、历史、运行与审计。
-- `projectctl` CLI，结构化 JSON、错误码、dry-run、写入幂等键、版本冲突保护。
+- npm 分发的 `procli`：Profile 环境路由、钉钉个人授权、结构化 JSON、dry-run、写入幂等与写后回读校验。
 - 企业钉钉 OAuth 登录、Corp ID 企业边界校验、员工身份与项目成员绑定、服务端会话和 Agent 独立令牌。
 - PostgreSQL 持久化；Markdown 与附件以普通文件保存；Docker/NAS 部署定义。
 
@@ -27,7 +27,7 @@ npm start
 
 终端保持运行即可。停止页面服务按 Ctrl+C；数据库继续运行，数据保留。重启页面服务再次执行 `npm start`。开发时使用 `npm run dev`。
 
-安装依赖使用 `npm ci`，全局 CLI 链接使用 `npm link`。已安装 PostgreSQL 17.9，独立数据库集群在 `data/postgres`，监听 `127.0.0.1:55432`，数据库名 `project_lab`。没有启动或占用 Homebrew 默认的 5432 数据库服务。
+安装依赖使用 `npm ci`。仓库内开发 CLI 可执行 `npm install -g ./packages/procli`；正式使用可从 npm 安装 `npm install -g @petercjl/procli`。已安装 PostgreSQL 17.9，独立数据库集群在 `data/postgres`，监听 `127.0.0.1:55432`，数据库名 `project_lab`。没有启动或占用 Homebrew 默认的 5432 数据库服务。
 
 `npm run db` 只初始化专属的空目录；若目标目录存在但不是已知集群，会拒绝初始化。自定义 PostgreSQL 工具路径可设置 `PG_BIN`。本地集群使用回环地址 trust 认证，适合可信的单用户电脑；同机其他用户仍可能连接。
 
@@ -43,12 +43,12 @@ http://127.0.0.1:4317/api/auth/dingtalk/callback
 
 复制 `.env.example` 为 `.env`，填写 Client ID、Client Secret 和本企业 Corp ID。首次启动可启用 `DINGTALK_BOOTSTRAP_FIRST_ADMIN=true`，让第一个通过企业校验的员工绑定预置主管；完成初始化后建议改为 `false`。详细步骤及安全边界见 [钉钉登录配置](docs/钉钉登录配置.md)。
 
-浏览器登录使用服务端 OAuth 回调和 HttpOnly 会话。Agent/CLI 不复用员工浏览器会话，使用独立的 `AGENT_API_TOKEN`：
+浏览器登录使用服务端 OAuth 回调和 HttpOnly 会话。`procli` 为每个 Profile 单独发起钉钉授权，获得绑定当前员工身份的个人 CLI 凭证；凭证只保存在本机配置目录，不写入代码仓库或 npm 包：
 
 ```bash
-export PROJECT_LAB_API_TOKEN='<与服务端 AGENT_API_TOKEN 相同的值>'
-projectctl doctor
-projectctl project list
+procli profile add local --url http://127.0.0.1:4317 --environment development
+procli auth login --profile local
+procli doctor --profile local --json
 ```
 
 `AUTH_MODE=development` 只用于隔离开发和自动验收；该模式允许 `x-actor` 模拟身份，不应开放给其他员工。
@@ -61,44 +61,40 @@ projectctl project list
 
 ## Agent 使用方式
 
-```bash
-projectctl doctor
-projectctl capabilities
-projectctl --help
-projectctl project list
-projectctl project create --name '商品项目' --goal '明确目标' --dry-run
-```
-
-典型闭环（尖括号替换为返回的真实标识）：
+`procli` 默认操作保存的 `nas` Profile。环境选择优先级为：命令行 `--profile`、环境变量 `PROCLI_PROFILE`、持久保存的当前 Profile、`nas`。开发时可持久切换到本地，也可只覆盖一条命令：
 
 ```bash
-projectctl project summary --id <项目ID>
-projectctl task get --id <任务ID>
-projectctl wiki read --project <项目ID> --path wiki/01-待立项.md
-projectctl task start --id <任务ID>
-projectctl run start --task <任务ID> --skill <实际执行能力名称> --skill-version <版本> --input '输入范围与依据'
-# 在当前 Agent 宿主中执行具体业务能力，产出报告.md
-projectctl wiki write --project <项目ID> --path <任务的wikiPath> --file 报告.md --run <运行ID>
-projectctl artifact add --task <任务ID> --file 原始数据.csv
-projectctl run finish --id <运行ID> --status completed --output '报告及依据已交付' --quality '说明校验结果'
-projectctl task submit --id <任务ID>
-# 主管人工确认后，通过界面审核，或由明确授权的 Agent 执行：
-projectctl task approve --id <任务ID> --actor supervisor
+procli profile add nas --url http://<NAS地址>:14317 --environment production
+procli profile add local --url http://127.0.0.1:4317 --environment development
+procli profile use local
+procli --profile nas doctor --json
 ```
 
-CLI 默认角色为 `agent`。预置成员 ID：`supervisor`、`market`、`design`、`operations`、`agent`。钉钉登录成功后，员工会自动绑定项目成员；新增非登录成员也可使用 `projectctl member add --name 姓名`。
+首个正式能力是按商品全生命周期模板创建项目。先预览；NAS 生产写入需明确增加 `--yes`：
 
-项目实验台不内置大模型执行器，也不会仅因填写 Skill 名称就自动执行它。真实 Skill 在 Codex、SealSeek 或其他 Agent 宿主中运行，用 CLI 完成项目上下文读取和结果回写。自动执行应遵守原业务 Skill 的授权和验收要求。
+```bash
+procli project create --name '商品项目' --goal '明确目标' --dry-run --json
+procli project create --name '商品项目' --goal '明确目标' --idempotency-key '<UUID>' --yes --json
+```
+
+创建成功只有在服务端回读的项目、任务数和 Wiki 数与写入响应一致时才会返回。Agent 可通过 npm 包内唯一可信源安装配套 Skill：
+
+```bash
+procli skill source --json
+procli skill status --agent codex --json
+procli skill install --agent codex
+procli skill install --agent sealseek
+```
+
+项目实验台不内置大模型执行器。真实 Skill 在 Codex、SealSeek 或其他 Agent 宿主中运行，并通过 `procli` 操作同一套项目服务。
 
 ### 写入约定
 
-- `--dry-run` 显示拟写请求，保持服务数据不变。
+- `--dry-run` 显示目标 Profile 与拟写请求，保持服务数据不变。
 - `--idempotency-key KEY` 用于安全重试；同键同请求返回原结果，换内容或操作身份会拒绝。
-- `task update` 支持 `--json`，包含 `dependencies` 数组和 `stage`；默认读取当前版本，`--version N` 可严格指定预期版本。
-- Wiki 更新要求版本相符，CLI 默认先读取元数据。UI 在冲突时保留编辑正文，可复制后重新载入再合并。
-- 附件最大 20 MB；完整导入 JSON 最大 100 MB，包含 Base64 编码开销。更大数据集用数据库 + 文件目录备份。
-- 提交的正文长度或附件存在只是软件门槛；交付质量由审核人判定。
-- 业务写操作记录在活动中；失败调用返回错误码，可由 Agent 纠正输入或请求人工帮助。
+- 每个 Profile 使用独立个人凭证；`procli auth status` 可核对当前身份。
+- 生产环境写入必须显式 `--yes`；目标环境、实例指纹或 API 版本不匹配时拒绝写入。
+- 业务写操作记录在活动中；失败调用返回稳定错误码，供 Agent 纠正输入或请求人工帮助。
 
 ## 数据与恢复
 
@@ -113,22 +109,17 @@ data/
   verification/                     自动验收独立文件库
 ```
 
-PostgreSQL 中 `lab_state` 的 JSONB 保存项目状态与文档元数据。页面文件是可直接读取的 Markdown；建议通过 CLI 写入以维持版本和审计。直接手改文件不会自动更新元数据或生成审计记录。
+PostgreSQL 中 `lab_state` 的 JSONB 保存项目状态与文档元数据。页面文件是可直接读取的 Markdown；业务写入应通过产品页面或已发布的 `procli` 能力完成，以维持版本和审计。
 
 每次 Wiki 写入保留旧正文。常规请求失败时回滚本次文件变更与数据库事务；进程崩溃或断电时，文件系统与 PostgreSQL 之间不具备跨存储原子事务，因此重要数据应定期备份。初稿的单行 JSONB 行锁适用于小规模本地预演，大规模多人部署需进一步拆表与优化。
 
-```bash
-projectctl project export --id <项目ID> --file 全新备份文件.json
-projectctl project restore --file 全新备份文件.json
-```
-
-导出拒绝覆盖已有文件。恢复会分配新 ID，保留原项目，附件校验不匹配则拒绝恢复。迁移后以相对路径链接的 Wiki 可继续使用；正文中手工写入的绝对路径或旧项目 URL 需要另行调整。
+页面与服务端 API 已支持项目导出和新副本恢复；对应 `procli` 命令将在能力清单扩展时统一发布。恢复会分配新 ID并保留原项目，附件校验不匹配时拒绝恢复。迁移后以相对路径链接的 Wiki 可继续使用。
 
 完整迁移并保留 ID：停止应用写入，用 `pg_dump` 备份 `project_lab`，同时备份 `data/projects`；在新 PostgreSQL 中恢复数据库并配置 `DATA_DIR` 指向项目文件的父目录。不要直接将运行中的 PostgreSQL 数据目录当成跨平台迁移包。
 
 ## 钉钉消息
 
-当前自动生成本地审核和交接通知，可通过页面与 `projectctl notification list` 查看。登录阶段已经保存员工的钉钉稳定身份映射；下一步接入工作通知时可按该映射定位接收人，并单独确认应用发消息权限、触发规则与发送策略。
+当前自动生成本地审核和交接通知，可通过页面查看。登录阶段已经保存员工的钉钉稳定身份映射；接入工作通知后可按该映射定位接收人，并配置应用发消息权限、触发规则与发送策略。
 
 ## NAS / 容器
 
@@ -152,6 +143,7 @@ git push origin main
 ```bash
 npm run check
 npm test
+npm run procli:test
 npm run build
 npm run verify:auth
 npx tsx scripts/verify.ts

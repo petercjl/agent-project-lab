@@ -17,6 +17,8 @@ NAS 使用 `deploy/compose.yaml`：独立 PostgreSQL、独立持久化卷、应�
 
 ```dotenv
 APP_BIND_IP=0.0.0.0
+APP_ENV=production
+INSTANCE_ID=nas-production
 AUTH_MODE=dingtalk
 DINGTALK_CLIENT_ID=<Client ID>
 DINGTALK_CLIENT_SECRET=<Client Secret>
@@ -48,10 +50,12 @@ curl --fail http://127.0.0.1:14317/api/health
 ssh -N -L 127.0.0.1:14317:127.0.0.1:14317 <NAS的SSH别名>
 ```
 
-浏览器打开 `http://127.0.0.1:14317`，Agent 使用：
+浏览器打开 `http://127.0.0.1:14317`。Agent 在自己的电脑配置 NAS Profile 并通过钉钉授权：
 
 ```bash
-projectctl doctor --url http://127.0.0.1:14317
+procli profile add nas --url http://<NAS局域网地址>:14317 --environment production
+procli auth login --profile nas
+procli doctor --profile nas --json
 ```
 
 员工局域网预演时，浏览器直接打开 `http://<NAS局域网地址>:14317`。该地址对应的完整 OAuth 回调必须同时登记在钉钉内部应用安全配置中。

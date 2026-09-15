@@ -1,0 +1,28 @@
+{
+  "schema": "portable-skill-adapter",
+  "schema_version": "1.0.0",
+  "platform": "sealseek",
+  "mappings": [
+    {
+      "capability_id": "project.service.project.create",
+      "implementation": {
+        "kind": "stable-cli",
+        "discovery": "Resolve procli from PATH and verify it with procli version and procli capabilities --json.",
+        "execution": "Run procli project create with the selected Profile, one idempotency key, preview and required confirmation.",
+        "normalization": "Use the procli JSON envelope without reinterpretation."
+      },
+      "features": [
+        "profile_selection",
+        "target_identity_verification",
+        "dry_run",
+        "production_confirmation",
+        "idempotent_write",
+        "post_write_readback",
+        "structured_json"
+      ],
+      "status": "implemented",
+      "permissions": ["Network access to the selected service", "Permission to create a project"],
+      "normalization": "Use the procli JSON envelope without reinterpretation."
+    }
+  ]
+}
