@@ -141,6 +141,8 @@ route("get", "/api/capabilities", () => ({
     "project.create",
     "project.folder.create",
     "project.folder.move",
+    "project.directory.reorder",
+    "project.pin",
     "project.delete",
     "project.export",
     "project.restore",
@@ -217,6 +219,11 @@ route("post", "/api/project-folders", (req) =>
       createdAt: now(),
       updatedAt: now(),
       createdBy: who,
+      directoryOrder:
+        Math.max(
+          -1,
+          ...s.folders.map((item: any) => item.directoryOrder ?? -1),
+        ) + 1,
     };
     s.folders.push(folder);
     audit(s, who, "folder.created", "", {
@@ -237,15 +244,115 @@ route("patch", "/api/v1/projects/:id/folder", (req) =>
         : required(req.body.folderId, "文件夹");
     const folder = folderId ? get(s.folders, folderId, "文件夹") : null;
     const previousFolderId = project.folderId || null;
+    const wasPinned = Boolean(project.pinned);
+    project.pinned = false;
+    delete project.pinnedFromFolderId;
     project.folderId = folder?.id || null;
+    project.directoryOrder =
+      Math.max(
+        -1,
+        ...s.projects
+          .filter(
+            (item: any) =>
+              !item.deletedAt &&
+              !item.pinned &&
+              (item.folderId || null) === project.folderId,
+          )
+          .map((item: any) => item.directoryOrder ?? -1),
+      ) + 1;
     audit(s, who, "project.moved", project.id, {
       name: project.name,
       fromFolderId: previousFolderId,
       toFolderId: project.folderId,
       toFolderName: folder?.name || "未归档",
+      wasPinned,
       source: requestSource(req),
     });
     return project;
+  }),
+);
+route("patch", "/api/v1/projects/:id/pin", (req) =>
+  mutate(req, (s: any, who: string) => {
+    s.folders ||= [];
+    const project = activeProject(s.projects, req.params.id);
+    const pinned = Boolean(req.body.pinned);
+    if (Boolean(project.pinned) === pinned) return project;
+    if (pinned) {
+      project.pinnedFromFolderId = project.folderId || null;
+      project.folderId = null;
+      project.pinned = true;
+    } else {
+      const returnFolderId = project.pinnedFromFolderId || null;
+      project.folderId = s.folders.some(
+        (folder: any) => folder.id === returnFolderId,
+      )
+        ? returnFolderId
+        : null;
+      project.pinned = false;
+      delete project.pinnedFromFolderId;
+    }
+    project.directoryOrder =
+      Math.max(
+        -1,
+        ...s.projects
+          .filter(
+            (item: any) =>
+              !item.deletedAt &&
+              item.id !== project.id &&
+              Boolean(item.pinned) === pinned &&
+              (pinned || (item.folderId || null) === project.folderId),
+          )
+          .map((item: any) => item.directoryOrder ?? -1),
+      ) + 1;
+    audit(s, who, pinned ? "project.pinned" : "project.unpinned", project.id, {
+      name: project.name,
+      folderId: project.folderId,
+      source: requestSource(req),
+    });
+    return project;
+  }),
+);
+route("put", "/api/project-directory/order", (req) =>
+  mutate(req, (s: any, who: string) => {
+    s.folders ||= [];
+    const folderIds = req.body.folderIds;
+    const layout = req.body.projects;
+    if (!Array.isArray(folderIds) || !Array.isArray(layout))
+      throw new Fault("VALIDATION", "目录排序数据无效");
+    const activeProjects = s.projects.filter((item: any) => !item.deletedAt);
+    const exactIds = (actual: any[], expected: string[]) =>
+      actual.length === expected.length &&
+      new Set(actual).size === actual.length &&
+      actual.every((id: any) => typeof id === "string" && expected.includes(id));
+    if (!exactIds(folderIds, s.folders.map((folder: any) => folder.id)))
+      throw new Fault("DIRECTORY_CONFLICT", "目录清单已变化，请刷新后重试", 409);
+    const projectIds = layout.map((item: any) => item?.id);
+    if (!exactIds(projectIds, activeProjects.map((project: any) => project.id)))
+      throw new Fault("DIRECTORY_CONFLICT", "项目清单已变化，请刷新后重试", 409);
+    folderIds.forEach((id: string, index: number) => {
+      const folder = s.folders.find((item: any) => item.id === id);
+      folder.directoryOrder = index;
+      folder.updatedAt = now();
+    });
+    layout.forEach((item: any, index: number) => {
+      const project = activeProjects.find((entry: any) => entry.id === item.id);
+      const pinned = Boolean(item.pinned);
+      const folderId = pinned || !item.folderId ? null : item.folderId;
+      if (folderId && !s.folders.some((folder: any) => folder.id === folderId))
+        throw new Fault("NOT_FOUND", "目录不存在", 404);
+      if (pinned && !project.pinned)
+        project.pinnedFromFolderId = project.folderId || null;
+      if (!pinned && project.pinned) delete project.pinnedFromFolderId;
+      project.pinned = pinned;
+      project.folderId = folderId;
+      project.directoryOrder = index;
+    });
+    audit(s, who, "directory.reordered", "", {
+      folderCount: folderIds.length,
+      projectCount: layout.length,
+      source: requestSource(req),
+    });
+    return { folders: s.folders, projects: activeProjects };
   }),
 );
 async function createProjectRequest(req: any, detailed = false) {
@@ -841,6 +948,13 @@ route("post", "/api/projects/restore", (req) =>
     const project = remap(d.project);
     project.name += "（恢复副本）";
     project.folderId = null;
+    project.pinned = false;
+    delete project.pinnedFromFolderId;
+    project.directoryOrder =
+      Math.max(
+        -1,
+        ...s.projects.map((item: any) => item.directoryOrder ?? -1),
+      ) + 1;
     project.createdAt = now();
     s.projects.push(project);
     for (const k of [

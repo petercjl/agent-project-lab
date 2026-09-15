@@ -177,6 +177,9 @@ export function makeProject(s: any, input: any) {
     goal: input.goal || "",
     createdAt: now(),
     updatedAt: now(),
+    directoryOrder:
+      Math.max(-1, ...s.projects.map((item: any) => item.directoryOrder ?? -1)) +
+      1,
     template: "product-sop-v1",
     sopMode: sop.mode,
     sopVersion: 1,

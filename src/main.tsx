@@ -28,12 +28,7 @@ function App() {
     [deleteTarget, DELETE_TARGET] = useS<any>(null),
     [folderOpen, FOLDER_OPEN] = useS(false),
     [folderName, FOLDER_NAME] = useS(""),
-    [sortBy, SORT_BY] = useS(
-      localStorage.getItem("project-sort-by") || "updatedAt",
-    ),
-    [sortDirection, SORT_DIRECTION] = useS(
-      localStorage.getItem("project-sort-direction") || "desc",
-    ),
+    [contextMenu, CONTEXT_MENU] = useS<any>(null),
     [sidebarCollapsed, SIDEBAR_COLLAPSED] = useS(
       localStorage.getItem("sidebar-collapsed") === "true",
     ),
@@ -115,13 +110,26 @@ function App() {
     localStorage.setItem("actor", actor);
   }, [actor]);
   useE(() => {
-    localStorage.setItem("project-sort-by", sortBy);
-    localStorage.setItem("project-sort-direction", sortDirection);
-  }, [sortBy, sortDirection]);
-  useE(() => {
     localStorage.setItem("sidebar-collapsed", String(sidebarCollapsed));
     localStorage.setItem("sidebar-width", String(sidebarWidth));
   }, [sidebarCollapsed, sidebarWidth]);
+  useE(() => {
+    if (!contextMenu) return;
+    const close = () => CONTEXT_MENU(null);
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
+    window.addEventListener("click", close);
+    window.addEventListener("resize", close);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("resize", close);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [contextMenu]);
   useE(() => {
     if (pid && tab === "Wiki")
       api(`/projects/${pid}/wiki?path=${encodeURIComponent(page)}`)
@@ -140,36 +148,33 @@ function App() {
     pages = s?.pages.filter((x: any) => x.projectId === pid) || [],
     member = (id: string) =>
       s?.members.find((m: any) => m.id === id)?.name || id;
-  const folders = s?.folders || [];
+  const folders = [...(s?.folders || [])].sort(
+    (a: any, b: any) =>
+      (a.directoryOrder ?? Number.MAX_SAFE_INTEGER) -
+      (b.directoryOrder ?? Number.MAX_SAFE_INTEGER),
+  );
   const folderIds = new Set(folders.map((folder: any) => folder.id));
-  const sortedProjects = [...(s?.projects || [])].sort((a: any, b: any) => {
-    const value = (item: any) =>
-      sortBy === "name"
-        ? item.name
-        : sortBy === "createdAt"
-          ? item.createdAt
-          : item.updatedAt || item.createdAt;
-    const result = String(value(a) || "").localeCompare(
-      String(value(b) || ""),
-      "zh-CN",
-      {
-        numeric: true,
-        sensitivity: "base",
-      },
-    );
-    return sortDirection === "asc" ? result : -result;
-  });
+  const sortedProjects = [...(s?.projects || [])].sort(
+    (a: any, b: any) =>
+      (a.directoryOrder ?? Number.MAX_SAFE_INTEGER) -
+      (b.directoryOrder ?? Number.MAX_SAFE_INTEGER),
+  );
   const projectGroups = [
+    { id: "__pinned__", name: "置顶", pinned: true },
     { id: "", name: "未归档" },
     ...folders.map((folder: any) => ({ id: folder.id, name: folder.name })),
   ].map((folder: any) => ({
     ...folder,
     projects: sortedProjects.filter((project: any) =>
-      folder.id
-        ? project.folderId === folder.id
-        : !project.folderId || !folderIds.has(project.folderId),
+      folder.pinned
+        ? project.pinned
+        : project.pinned
+          ? false
+          : folder.id
+            ? project.folderId === folder.id
+            : !project.folderId || !folderIds.has(project.folderId),
     ),
-  }));
+  })).filter((folder: any) => !folder.pinned || folder.projects.length > 0);
   const local = (v: string) =>
     v ? new Date(v).toLocaleString("zh-CN", { hour12: false }) : "—";
   const ready = (t: any) =>
@@ -248,12 +253,108 @@ function App() {
       ),
     );
   }
+  async function pinProject(project: any) {
+    CONTEXT_MENU(null);
+    await act(() =>
+      api(
+        `/v1/projects/${project.id}/pin`,
+        "PATCH",
+        { pinned: !project.pinned },
+        { "idempotency-key": crypto.randomUUID() },
+      ),
+    );
+  }
+  function dragItem(event: React.DragEvent) {
+    try {
+      return JSON.parse(
+        event.dataTransfer.getData("application/x-project-directory") ||
+          event.dataTransfer.getData("text/plain"),
+      );
+    } catch {
+      return null;
+    }
+  }
+  async function saveDirectoryOrder(nextFolders: any[], nextGroups: any[]) {
+    await act(() =>
+      api(
+        "/project-directory/order",
+        "PUT",
+        {
+          folderIds: nextFolders.map((folder: any) => folder.id),
+          projects: nextGroups.flatMap((group: any) =>
+            group.projects.map((project: any) => ({
+              id: project.id,
+              pinned: Boolean(project.pinned),
+              folderId: project.folderId || null,
+            })),
+          ),
+        },
+        { "idempotency-key": crypto.randomUUID() },
+      ),
+    );
+  }
+  async function dropFolder(draggedId: string, targetId: string) {
+    if (draggedId === targetId) return;
+    const nextFolders = [...folders];
+    const from = nextFolders.findIndex((folder: any) => folder.id === draggedId);
+    const to = nextFolders.findIndex((folder: any) => folder.id === targetId);
+    if (from < 0 || to < 0) return;
+    const [dragged] = nextFolders.splice(from, 1);
+    nextFolders.splice(from < to ? to - 1 : to, 0, dragged);
+    await saveDirectoryOrder(nextFolders, projectGroups);
+  }
+  async function dropProject(
+    draggedId: string,
+    targetGroupId: string,
+    beforeProjectId = "",
+  ) {
+    const nextGroups = projectGroups.map((group: any) => ({
+      ...group,
+      projects: [...group.projects],
+    }));
+    let dragged: any = null;
+    for (const group of nextGroups) {
+      const index = group.projects.findIndex(
+        (project: any) => project.id === draggedId,
+      );
+      if (index >= 0) [dragged] = group.projects.splice(index, 1);
+    }
+    const target = nextGroups.find((group: any) => group.id === targetGroupId);
+    if (!dragged || !target) return;
+    dragged = {
+      ...dragged,
+      pinned: Boolean(target.pinned),
+      folderId: target.pinned || !target.id ? null : target.id,
+    };
+    const before = beforeProjectId
+      ? target.projects.findIndex(
+          (project: any) => project.id === beforeProjectId,
+        )
+      : -1;
+    target.projects.splice(before >= 0 ? before : target.projects.length, 0, dragged);
+    await saveDirectoryOrder(folders, nextGroups);
+  }
   function selectProject(project: any) {
     if (dirty && !confirm("有未保存内容，确认切换？")) return;
     P(project.id);
     W("wiki/index.md");
     D(null);
     DIR(false);
+  }
+  function openProjectMenu(
+    project: any,
+    point: { clientX: number; clientY: number },
+  ) {
+    const menuWidth = 224;
+    const estimatedHeight = Math.min(360, 150 + (folders.length + 1) * 34);
+    CONTEXT_MENU({
+      project,
+      x: Math.max(8, Math.min(point.clientX, window.innerWidth - menuWidth - 8)),
+      y: Math.max(
+        8,
+        Math.min(point.clientY, window.innerHeight - estimatedHeight - 8),
+      ),
+    });
   }
   function resizeSidebar(event: React.PointerEvent<HTMLDivElement>) {
     if (sidebarCollapsed) return;
@@ -368,41 +469,47 @@ function App() {
         <div className="side-label">
           工作空间 <span>{auth.mode === "dingtalk" ? "DINGTALK" : "DEV"}</span>
         </div>
-        <button className="new-project" onClick={() => CREATE(true)}>
-          ＋ 创建项目
-        </button>
-        <div className="directory-head">
-          <span>项目目录</span>
-          <button title="新建文件夹" onClick={() => FOLDER_OPEN(true)}>
-            ＋ 文件夹
+        <div className="project-create-actions">
+          <button className="new-project" onClick={() => CREATE(true)}>
+            ＋ 创建项目
+          </button>
+          <button className="new-folder" onClick={() => FOLDER_OPEN(true)}>
+            ＋ 创建目录
           </button>
         </div>
-        <div className="project-sort">
-          <select
-            aria-label="项目排序字段"
-            value={sortBy}
-            onChange={(event) => SORT_BY(event.target.value)}
-          >
-            <option value="updatedAt">修改时间</option>
-            <option value="createdAt">创建时间</option>
-            <option value="name">项目名称</option>
-          </select>
-          <button
-            aria-label="切换排序方向"
-            title={sortDirection === "asc" ? "当前升序" : "当前降序"}
-            onClick={() =>
-              SORT_DIRECTION(sortDirection === "asc" ? "desc" : "asc")
-            }
-          >
-            {sortDirection === "asc" ? "↑" : "↓"}
-          </button>
+        <div className="directory-head">
+          <span>项目目录</span>
+          <small>拖拽排序 · 右键管理</small>
         </div>
         <div className="project-list">
           {projectGroups.map((group: any) => (
             <section className="project-group" key={group.id || "unfiled"}>
-              <div className="folder-title">
+              <div
+                className="folder-title"
+                draggable={Boolean(group.id && !group.pinned)}
+                onDragStart={(event) => {
+                  event.dataTransfer.effectAllowed = "move";
+                  event.dataTransfer.setData(
+                    "application/x-project-directory",
+                    JSON.stringify({ type: "folder", id: group.id }),
+                  );
+                  event.dataTransfer.setData(
+                    "text/plain",
+                    JSON.stringify({ type: "folder", id: group.id }),
+                  );
+                }}
+                onDragOver={(event) => event.preventDefault()}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  const dragged = dragItem(event);
+                  if (dragged?.type === "folder" && group.id && !group.pinned)
+                    dropFolder(dragged.id, group.id);
+                  if (dragged?.type === "project")
+                    dropProject(dragged.id, group.id);
+                }}
+              >
                 <span>
-                  {group.id ? "▾" : "⌂"} {group.name}
+                  {group.pinned ? "⌖" : group.id ? "▾" : "⌂"} {group.name}
                 </span>
                 <small>{group.projects.length}</small>
               </div>
@@ -410,40 +517,63 @@ function App() {
                 <div
                   className={`project-row ${pid === x.id ? "selected" : ""}`}
                   key={x.id}
+                  tabIndex={0}
+                  draggable
+                  onDragStart={(event) => {
+                    event.dataTransfer.effectAllowed = "move";
+                    event.dataTransfer.setData(
+                      "application/x-project-directory",
+                      JSON.stringify({ type: "project", id: x.id }),
+                    );
+                    event.dataTransfer.setData(
+                      "text/plain",
+                      JSON.stringify({ type: "project", id: x.id }),
+                    );
+                  }}
+                  onDragOver={(event) => event.preventDefault()}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    const dragged = dragItem(event);
+                    if (dragged?.type === "project")
+                      dropProject(dragged.id, group.id, x.id);
+                  }}
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    openProjectMenu(x, event);
+                  }}
+                  onKeyDown={(event) => {
+                    if (
+                      event.key !== "ContextMenu" &&
+                      !(event.shiftKey && event.key === "F10")
+                    )
+                      return;
+                    event.preventDefault();
+                    const box = event.currentTarget.getBoundingClientRect();
+                    openProjectMenu(x, {
+                      clientX: box.left + Math.min(box.width, 180),
+                      clientY: box.top + box.height,
+                    });
+                  }}
                 >
                   <button
                     className="project-select"
+                    draggable
+                    onDragStart={(event) => {
+                      event.dataTransfer.effectAllowed = "move";
+                      event.dataTransfer.setData(
+                        "application/x-project-directory",
+                        JSON.stringify({ type: "project", id: x.id }),
+                      );
+                      event.dataTransfer.setData(
+                        "text/plain",
+                        JSON.stringify({ type: "project", id: x.id }),
+                      );
+                    }}
                     onClick={() => selectProject(x)}
                   >
                     ▣ <span>{x.name}</span>
                   </button>
-                  <details className="project-menu">
-                    <summary aria-label={`管理项目 ${x.name}`}>•••</summary>
-                    <div>
-                      <label>
-                        移动到文件夹
-                        <select
-                          value={x.folderId || ""}
-                          onChange={(event) =>
-                            moveProject(x, event.target.value)
-                          }
-                        >
-                          <option value="">未归档</option>
-                          {folders.map((folder: any) => (
-                            <option key={folder.id} value={folder.id}>
-                              {folder.name}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <button
-                        className="menu-delete"
-                        onClick={() => startDelete(x)}
-                      >
-                        删除项目
-                      </button>
-                    </div>
-                  </details>
                 </div>
               ))}
             </section>
@@ -1141,6 +1271,79 @@ function App() {
             )}
           </>
         )}
+        {contextMenu && (
+          <div
+            className="project-context-menu"
+            role="menu"
+            aria-label={`管理项目 ${contextMenu.project.name}`}
+            style={{ left: contextMenu.x, top: contextMenu.y }}
+            onClick={(event) => event.stopPropagation()}
+            onContextMenu={(event) => event.preventDefault()}
+          >
+            <div
+              className="context-project-name"
+              title={contextMenu.project.name}
+            >
+              {contextMenu.project.name}
+            </div>
+            <div className="context-submenu">
+              <button role="menuitem" aria-haspopup="menu">
+                <span>▣&nbsp; 移动到目录</span>
+                <b>›</b>
+              </button>
+              <div className="context-submenu-panel" role="menu">
+                <button
+                  role="menuitem"
+                  className={!contextMenu.project.folderId ? "current" : ""}
+                  onClick={() => {
+                    CONTEXT_MENU(null);
+                    moveProject(contextMenu.project, "");
+                  }}
+                >
+                  <span>⌂&nbsp; 未归档</span>
+                  {!contextMenu.project.folderId && <b>✓</b>}
+                </button>
+                {folders.map((folder: any) => (
+                  <button
+                    role="menuitem"
+                    className={
+                      contextMenu.project.folderId === folder.id
+                        ? "current"
+                        : ""
+                    }
+                    key={folder.id}
+                    onClick={() => {
+                      CONTEXT_MENU(null);
+                      moveProject(contextMenu.project, folder.id);
+                    }}
+                  >
+                    <span>□&nbsp; {folder.name}</span>
+                    {contextMenu.project.folderId === folder.id && <b>✓</b>}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <button
+              role="menuitem"
+              onClick={() => pinProject(contextMenu.project)}
+            >
+              <span>
+                ⌖&nbsp; {contextMenu.project.pinned ? "取消置顶" : "置顶"}
+              </span>
+            </button>
+            <div className="context-divider" />
+            <button
+              role="menuitem"
+              className="context-delete"
+              onClick={() => {
+                CONTEXT_MENU(null);
+                startDelete(contextMenu.project);
+              }}
+            >
+              <span>⌫&nbsp; 删除项目</span>
+            </button>
+          </div>
+        )}
         {createOpen && (
           <div className="modal-backdrop" onMouseDown={() => CREATE(false)}>
             <section
@@ -1217,12 +1420,12 @@ function App() {
               <div className="modal-head">
                 <div>
                   <small>PROJECT DIRECTORY</small>
-                  <h2>新建文件夹</h2>
+                  <h2>创建目录</h2>
                 </div>
                 <button onClick={() => FOLDER_OPEN(false)}>×</button>
               </div>
               <label>
-                文件夹名称 <span>*</span>
+                目录名称 <span>*</span>
                 <input
                   autoFocus
                   value={folderName}
@@ -1237,7 +1440,7 @@ function App() {
                   disabled={busy || !folderName.trim()}
                   onClick={createFolder}
                 >
-                  创建文件夹
+                  创建目录
                 </button>
               </div>
             </section>

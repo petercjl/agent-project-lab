@@ -177,11 +177,33 @@ aside {
   padding: 1px 4px;
   border-radius: 3px;
 }
+.project-create-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+  margin: 8px 0 16px;
+}
+.new-project,
+.new-folder {
+  min-width: 0;
+  margin: 0;
+  padding: 9px 5px;
+  font-size: 11px;
+}
 .new-project {
   background: #2c4465;
   color: #e6efff;
   border-color: #3a557a;
-  margin: 8px 0 16px;
+}
+.new-folder {
+  background: #203450;
+  color: #d4e0ef;
+  border-color: #3a506c;
+}
+.new-folder:hover {
+  background: #294362;
+  border-color: #587497;
+  color: white;
 }
 .directory-head {
   display: flex;
@@ -191,33 +213,9 @@ aside {
   color: #8197b3;
   font-size: 11px;
 }
-.directory-head button {
-  border: 0;
-  padding: 4px 0;
-  background: transparent;
-  color: #a9bdd5;
-  font-size: 10px;
-}
-.project-sort {
-  display: flex;
-  gap: 5px;
-  padding: 0 4px 9px;
-}
-.project-sort select {
-  min-width: 0;
-  flex: 1;
-  border-color: #3a506c;
-  background: #203450;
-  color: #bdcbe0;
-  padding: 6px 7px;
-  font-size: 10px;
-}
-.project-sort button {
-  width: 31px;
-  border-color: #3a506c;
-  background: #203450;
-  color: #bdcbe0;
-  padding: 5px;
+.directory-head small {
+  color: #617996;
+  font-size: 9px;
 }
 .project-list {
   overflow: auto;
@@ -234,6 +232,13 @@ aside {
   font-size: 10px;
   text-transform: none;
 }
+.folder-title[draggable="true"] {
+  cursor: grab;
+}
+.folder-title[draggable="true"]:active,
+.project-row[draggable="true"]:active {
+  cursor: grabbing;
+}
 .folder-title small {
   color: #607996;
 }
@@ -244,6 +249,7 @@ aside {
   position: relative;
   margin: 3px 0;
   border-radius: 7px;
+  cursor: grab;
 }
 .project-row.selected {
   background: #314b70;
@@ -277,61 +283,85 @@ aside {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.project-menu {
-  flex: 0 0 auto;
+.project-row:focus-visible {
+  outline: 2px solid #75a7dc;
+  outline-offset: 1px;
 }
-.project-menu[open] {
-  flex-basis: 100%;
+.project-context-menu {
+  position: fixed;
+  z-index: 200;
+  width: 224px;
+  padding: 7px;
+  border: 1px solid #d8dde5;
+  border-radius: 11px;
+  background: rgb(255 255 255 / 98%);
+  color: #2f3947;
+  box-shadow: 0 18px 48px rgb(20 31 47 / 24%);
+  backdrop-filter: blur(14px);
 }
-.project-menu[open] summary {
-  position: absolute;
-  top: 0;
-  right: 0;
-}
-.project-menu summary {
-  width: 28px;
-  padding: 9px 5px;
-  color: #8ea5c1;
-  cursor: pointer;
-  list-style: none;
+.context-project-name {
+  overflow: hidden;
+  padding: 7px 10px 9px;
+  color: #8a95a4;
   font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.project-menu summary::-webkit-details-marker {
+.project-context-menu button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #303947;
+  text-align: left;
+}
+.project-context-menu button:hover,
+.project-context-menu button:focus-visible,
+.project-context-menu button.current {
+  background: #edf1f6;
+  outline: none;
+}
+.project-context-menu button b {
+  color: #8994a3;
+  font-size: 17px;
+  font-weight: 500;
+}
+.context-divider {
+  height: 1px;
+  margin: 6px 5px;
+  background: #e2e5e9;
+}
+.project-context-menu .context-delete {
+  color: #b74444;
+}
+.project-context-menu .context-delete:hover,
+.project-context-menu .context-delete:focus-visible {
+  background: #fff0f0;
+}
+.context-submenu {
+  position: relative;
+}
+.context-submenu-panel {
   display: none;
+  position: absolute;
+  top: -7px;
+  left: calc(100% - 2px);
+  width: 210px;
+  max-height: min(360px, 70vh);
+  overflow-y: auto;
+  padding: 7px;
+  border: 1px solid #d8dde5;
+  border-radius: 11px;
+  background: rgb(255 255 255 / 98%);
+  box-shadow: 0 18px 48px rgb(20 31 47 / 20%);
 }
-.project-row:hover .project-menu summary,
-.project-menu[open] summary {
-  color: white;
-}
-.project-menu > div {
-  width: auto;
-  margin: 0 7px 8px;
-  padding: 10px;
-  border: 1px solid #dce3ec;
-  border-radius: 8px;
-  background: white;
-  color: #52647c;
-  box-shadow: 0 12px 35px rgb(12 27 47 / 24%);
-}
-.project-menu label {
+.context-submenu:hover .context-submenu-panel,
+.context-submenu:focus-within .context-submenu-panel {
   display: block;
-  font-size: 10px;
-}
-.project-menu select {
-  width: 100%;
-  margin-top: 6px;
-  font-size: 11px;
-}
-.project-menu .menu-delete {
-  width: 100%;
-  margin-top: 9px;
-  border-color: #f0d3d3;
-  color: #b54848;
-  font-size: 11px;
-}
-.project-menu .menu-delete:hover {
-  background: #fff2f2;
-  border-color: #dfaaaa;
 }
 .import {
   font-size: 12px;
@@ -388,7 +418,6 @@ main {
 .app.sidebar-collapsed .brand span,
 .app.sidebar-collapsed .side-label,
 .app.sidebar-collapsed .directory-head,
-.app.sidebar-collapsed .project-sort,
 .app.sidebar-collapsed .project-list,
 .app.sidebar-collapsed .import,
 .app.sidebar-collapsed .side-bottom {
@@ -401,9 +430,24 @@ main {
   padding: 0;
   font-size: 0;
 }
+.app.sidebar-collapsed .project-create-actions {
+  grid-template-columns: 1fr;
+  gap: 7px;
+  margin: 8px 2px;
+}
 .app.sidebar-collapsed .new-project::after {
   content: "＋";
   font-size: 20px;
+}
+.app.sidebar-collapsed .new-folder {
+  width: 44px;
+  height: 42px;
+  padding: 0;
+  font-size: 0;
+}
+.app.sidebar-collapsed .new-folder::after {
+  content: "□";
+  font-size: 18px;
 }
 .app.sidebar-collapsed .sidebar-resizer {
   display: none;
@@ -1254,6 +1298,15 @@ button.danger:hover {
   }
 }
 @media (max-width: 600px) {
+  .project-context-menu {
+    width: min(224px, calc(100vw - 16px));
+  }
+  .context-submenu-panel {
+    position: static;
+    width: 100%;
+    margin-top: 3px;
+    box-shadow: none;
+  }
   aside {
     width: 60px;
     padding: 18px 6px;
@@ -1267,12 +1320,17 @@ button.danger:hover {
   .import {
     display: none;
   }
-  .new-project {
+  .new-project,
+  .new-folder {
     font-size: 0;
   }
   .new-project:after {
     content: "＋";
     font-size: 18px;
+  }
+  .new-folder:after {
+    content: "□";
+    font-size: 16px;
   }
   .project-list button {
     font-size: 10px;

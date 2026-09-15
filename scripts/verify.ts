@@ -111,6 +111,13 @@ try {
     "agent",
     `folder-${Date.now()}`,
   );
+  const secondFolder = await ok(
+    "/project-folders",
+    "POST",
+    { name: `自动验收目录 B ${key}` },
+    "agent",
+    `folder-b-${Date.now()}`,
+  );
   assert.equal(
     (
       await api(
@@ -135,7 +142,52 @@ try {
     new Date(moved.updatedAt).getTime() >= new Date(moved.createdAt).getTime(),
   );
   checks += 3;
+  const pinned = await ok(
+    `/v1/projects/${p.id}/pin`,
+    "PATCH",
+    { pinned: true },
+    "agent",
+    `pin-${Date.now()}`,
+  );
+  assert.equal(pinned.pinned, true);
+  assert.equal(pinned.pinnedFromFolderId, folder.id);
+  const unpinned = await ok(
+    `/v1/projects/${p.id}/pin`,
+    "PATCH",
+    { pinned: false },
+    "agent",
+    `unpin-${Date.now()}`,
+  );
+  assert.equal(unpinned.pinned, false);
+  assert.equal(unpinned.folderId, folder.id);
+  checks += 4;
   let s = await ok("/state");
+  const folderOrder = [...s.folders].reverse().map((item: any) => item.id);
+  const projectOrder = [
+    s.projects.find((item: any) => item.id === p.id),
+    ...s.projects.filter((item: any) => item.id !== p.id),
+  ];
+  await ok(
+    "/project-directory/order",
+    "PUT",
+    {
+      folderIds: folderOrder,
+      projects: projectOrder.map((item: any) => ({
+        id: item.id,
+        pinned: Boolean(item.pinned),
+        folderId: item.folderId || null,
+      })),
+    },
+    "agent",
+    `directory-order-${Date.now()}`,
+  );
+  s = await ok("/state");
+  assert.equal(
+    s.folders.find((item: any) => item.id === folderOrder[0]).directoryOrder,
+    0,
+  );
+  assert.equal(s.projects.find((item: any) => item.id === p.id).directoryOrder, 0);
+  checks += 2;
   assert.equal(
     s.folders.some((item: any) => item.id === folder.id),
     true,
@@ -499,24 +551,107 @@ try {
   await pageUI.waitForTimeout(200);
   assert.equal((await pageUI.locator("aside").boundingBox())!.width, resizedWidth);
   checks += 4;
-  await pageUI.getByLabel("项目排序字段").selectOption("name");
-  await pageUI.getByLabel("切换排序方向").click();
+  assert.equal(await pageUI.getByLabel("项目排序字段").count(), 0);
+  assert.equal(await pageUI.getByLabel("切换排序方向").count(), 0);
+  checks += 2;
   await pageUI
     .locator(".folder-title")
     .filter({ hasText: folderName })
     .first()
     .waitFor();
-  await pageUI.getByLabel(`管理项目 ${p.name}`, { exact: true }).click();
-  await pageUI.locator(".project-menu[open] label").waitFor();
+  await projectButton.click({ button: "right" });
+  const contextMenu = pageUI.getByRole("menu", {
+    name: `管理项目 ${p.name}`,
+  });
+  await contextMenu.waitFor();
+  await contextMenu.getByRole("menuitem", { name: /移动到目录/ }).hover();
   await pageUI
-    .locator(".project-menu[open]")
-    .getByRole("button", { name: "删除项目", exact: true })
+    .locator(".context-submenu-panel")
+    .getByRole("menuitem", { name: folderName })
     .waitFor();
+  await contextMenu
+    .getByRole("menuitem", { name: /删除项目/ })
+    .waitFor();
+  await contextMenu.getByRole("menuitem", { name: /置顶/ }).waitFor();
+  await fs.mkdir("test-results", { recursive: true });
+  await pageUI.screenshot({
+    path: "test-results/verification-context-menu.png",
+    fullPage: true,
+  });
+  assert.equal(await pageUI.locator(".project-menu").count(), 0);
+  checks += 3;
+  await pageUI.mouse.click(800, 160);
+  const unfiledGroup = pageUI
+    .locator(".project-group")
+    .filter({ has: pageUI.locator(".folder-title", { hasText: "未归档" }) });
+  await Promise.all([
+    pageUI.waitForResponse(
+      (response) =>
+        response.url().includes("/api/project-directory/order") &&
+        response.request().method() === "PUT",
+    ),
+    projectButton.evaluate((source) => {
+      const target = [...document.querySelectorAll<HTMLElement>(".folder-title")]
+        .find((element) => element.textContent?.includes("未归档"));
+      if (!target) throw new Error("找不到未归档目录");
+      const data = new DataTransfer();
+      source.dispatchEvent(
+        new DragEvent("dragstart", { bubbles: true, dataTransfer: data }),
+      );
+      target.dispatchEvent(
+        new DragEvent("dragover", { bubbles: true, dataTransfer: data }),
+      );
+      target.dispatchEvent(
+        new DragEvent("drop", { bubbles: true, dataTransfer: data }),
+      );
+    }),
+  ]);
+  await unfiledGroup.getByRole("button", { name: "▣ " + p.name }).waitFor();
+  assert.equal(
+    (await ok("/state")).projects.find((item: any) => item.id === p.id).folderId,
+    null,
+  );
   checks += 2;
-  await pageUI.getByLabel(`管理项目 ${p.name}`, { exact: true }).click();
-  await pageUI.getByRole("button", { name: "＋ 文件夹", exact: true }).click();
+  const sourceFolderTitle = pageUI
+    .locator(".folder-title")
+    .filter({ hasText: folderName })
+    .first();
+  const targetFolderTitle = pageUI
+    .locator(".folder-title")
+    .filter({ hasText: secondFolder.name })
+    .first();
+  await Promise.all([
+    pageUI.waitForResponse(
+      (response) =>
+        response.url().includes("/api/project-directory/order") &&
+        response.request().method() === "PUT",
+    ),
+    sourceFolderTitle.evaluate((source, targetName) => {
+      const target = [...document.querySelectorAll<HTMLElement>(".folder-title")]
+        .find((element) => element.textContent?.includes(targetName));
+      if (!target) throw new Error("找不到目标目录");
+      const data = new DataTransfer();
+      source.dispatchEvent(
+        new DragEvent("dragstart", { bubbles: true, dataTransfer: data }),
+      );
+      target.dispatchEvent(
+        new DragEvent("drop", { bubbles: true, dataTransfer: data }),
+      );
+    }, secondFolder.name),
+  ]);
+  const reorderedState = await ok("/state");
+  assert(
+    reorderedState.folders.find((item: any) => item.id === folder.id)
+      .directoryOrder <
+      reorderedState.folders.find((item: any) => item.id === secondFolder.id)
+        .directoryOrder,
+  );
+  checks += 2;
   await pageUI
-    .getByRole("heading", { name: "新建文件夹", exact: true })
+    .getByRole("button", { name: "＋ 创建目录", exact: true })
+    .click();
+  await pageUI
+    .getByRole("heading", { name: "创建目录", exact: true })
     .waitFor();
   await pageUI.getByRole("button", { name: "×", exact: true }).click();
   checks++;
@@ -581,6 +716,7 @@ try {
         screenshots: [
           "test-results/verification-board.png",
           "test-results/verification-mobile.png",
+          "test-results/verification-context-menu.png",
         ],
       },
       null,
