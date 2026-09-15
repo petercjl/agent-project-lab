@@ -1,6 +1,6 @@
 ---
 name: project-management
-description: Read and operate projects through procli, including natural-language project/task matching, directory and task inspection, project creation, administrator deletion, and local/NAS target selection. Invoke this Skill only when the user's request explicitly contains the keyword "procli" or explicitly asks to use procli.
+description: Read and operate projects through procli, including natural-language project/task matching, directory and task inspection, concurrency-safe task creation, project creation, administrator deletion, and local/NAS target selection. Invoke this Skill only when the user's request explicitly contains the keyword "procli" or explicitly asks to use procli.
 ---
 
 # Project Management
@@ -9,7 +9,7 @@ Use the bundled `procli` executable as the only execution surface. Load the curr
 
 `procli` is the global explicit trigger word for this Skill. When it appears as the requested project-operation tool, route here even if the user does not mention the Skill name. Infer the operation and structured inputs from the surrounding natural language, then follow the matching main line.
 
-The logical capabilities are `project.service.directory.list`, `project.service.task.list`, `project.service.task.read`, `project.service.project.create`, and `project.service.project.delete`. If the matching adapter mapping is unresolved or unsupported, return `CAPABILITY_UNAVAILABLE`.
+The logical capabilities are `project.service.directory.list`, `project.service.task.list`, `project.service.task.read`, `project.service.task.create`, `project.service.project.create`, and `project.service.project.delete`. If the matching adapter mapping is unresolved or unsupported, return `CAPABILITY_UNAVAILABLE`.
 
 ## Contract
 
@@ -71,6 +71,34 @@ The CLI accepts exact names, while the Skill accepts the shorter and less formal
 
 For example, a request about a folder followed by a short task topic can be resolved by composing `directory list`, `task list`, and `task get`; do not pass the folder name or short topic directly into an exact-name CLI argument.
 
+## Add a task
+
+Task creation is a state-dependent write. The web workspace and `procli` may both modify the same project, so never construct and send a task from remembered conversation state or a previous task listing.
+
+1. Resolve the exact project name with the read-only natural-language flow above. Read the authoritative compact creation context immediately before composing the write:
+
+   ```bash
+   procli task create-context --project "<exact project name>" --json
+   ```
+
+   Use its exact node names, task names, members, constraints, `projectVersion`, and `contextToken`. Do not inspect the webpage, database, Markdown files, or `/api/state` directly.
+
+2. Required business inputs are the exact project, node, and a project-unique task title. Turn the user's stated work into a concise non-empty description when its meaning is clear. Ask one concise question only when the work, project, node, person, dependency, or placement remains materially ambiguous.
+3. Resolve a named owner or reviewer against the returned member ID/name. Resolve dependencies and `before`/`after` references against exact task names. Do not infer a dependency merely from node order. With no placement request, append to the end of the node.
+4. Generate one UUID for the logical write attempt. Run the authoritative server preview with the context token:
+
+   ```bash
+   procli task create --project "<project>" --node "<node>" --title "<title>" \
+     --description "<description>" --context-token "<token>" \
+     --idempotency-key "<uuid>" --dry-run --json
+   ```
+
+   Add `--owner`, `--reviewer`, `--priority`, `--due-date`, `--depends-on`, `--before-task`, `--after-task`, or `--skill` only when supported by the request and current context.
+
+5. Check the preview's target, exact project/node, title, people, dependencies, and insertion position. The user's instruction to add the task authorizes the matching local write. Production additionally requires `--yes`.
+6. Execute the identical command without `--dry-run`, preserving the context token and idempotency key. Accept success only when the CLI returns `verification=write-after-readback`, the created task ID, the expected exact project/node/title, and an advanced project version.
+7. On `PROJECT_STATE_CHANGED`, do not retry the write immediately. Return to Step 1 and obtain a new context. If the change affects uniqueness, target resolution, dependency, owner, or insertion position, show the changed candidates and ask the user; otherwise rebuild the preview with the same logical intent and idempotency key.
+
 ## Create a product project
 
 1. Collect the project name; it is the only required business input. Use the user's stated outcome as `--goal` when available.
@@ -121,11 +149,15 @@ Deletion is a recoverable soft delete, but it is a high-risk administrator actio
 - `SERVICE_UNAVAILABLE`: report the selected Profile and stop without changing environments.
 - `NOT_FOUND` on a read: state whether the project or task was not found and request an exact name; do not substitute a similar item.
 - `TASK_NAME_AMBIGUOUS`: report the conflicting task IDs and ask the user to disambiguate; do not choose one silently.
+- `CONTEXT_TOKEN_REQUIRED`: return to task creation Step 1 and obtain a current context token.
+- `PROJECT_STATE_CHANGED`: return to task creation Step 1; never write with the stale token.
+- `TASK_NAME_CONFLICT`: ask for a distinct project-wide task title.
+- `NODE_NOT_FOUND`, `MEMBER_NOT_FOUND`, `MEMBER_AMBIGUOUS`, `INVALID_DEPENDENCY`, or `POSITION_TASK_INVALID`: show the exact current candidates from a fresh creation context and ask one concise clarification question.
 - Multiple natural-language candidates: report the exact candidate names and current statuses when available, ask one concise clarification question, and return to the relevant resolution step after the user answers.
 - Unknown write result: retry only with the same idempotency key.
 
 ## Output contract
 
-For directory reads, report folder/project counts and the requested structured listing. For task lists, report the project identity, task count, and all nodes. For task detail, report the current status plus all returned history and related record groups. For creation, report the project name and ID, target Profile/environment, SOP mode, task count, Wiki count, and verification. For deletion, report the exact project name and ID, deletion time, actor, recoverable status, target, and verification. Never expose credentials or local token storage.
+For directory reads, report folder/project counts and the requested structured listing. For task lists, report the project identity, task count, and all nodes. For task detail, report the current status plus all returned history and related record groups. For task creation, report the task ID/title, exact project/node, target Profile/environment, owner, placement, resulting project version, and write-after-readback verification. For project creation, report the project name and ID, target Profile/environment, SOP mode, task count, Wiki count, and verification. For deletion, report the exact project name and ID, deletion time, actor, recoverable status, target, and verification. Never expose credentials or local token storage.
 
 After a reported execution failure, preserve the failed command, structured error code, and target metadata for a separately authorized plugin update. Runtime execution must not edit this Skill or its adapters.

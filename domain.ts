@@ -212,6 +212,7 @@ export function makeProject(s: any, input: any) {
     nameKey,
     type,
     status: "active",
+    version: 0,
     goal: input.goal || "",
     createdAt: now(),
     updatedAt: now(),

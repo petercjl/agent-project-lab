@@ -28,9 +28,14 @@ function run(args, env = {}) {
 
 async function mockService(environment) {
   let creates = 0;
+  let taskCreates = 0;
   let deletes = 0;
   let deleted = false;
   let lastCreateBody;
+  let lastTaskBody;
+  let lastTaskResult;
+  let projectVersion = 4;
+  const contextToken = () => `context-${projectVersion}`;
   const server = http.createServer((req, res) => {
     res.setHeader("content-type", "application/json");
     if (req.url === "/api/health")
@@ -153,6 +158,161 @@ async function mockService(environment) {
         }),
       );
     if (
+      req.url === "/api/v1/projects/project-1/task-create-context" &&
+      req.method === "GET"
+    )
+      return res.end(
+        JSON.stringify({
+          ok: true,
+          data: {
+            project: {
+              id: "project-1",
+              name: "Test",
+              type: "product",
+              status: "active",
+              projectVersion,
+            },
+            contextToken: contextToken(),
+            nodes: [
+              { name: "待立项", order: 0, taskCount: 1 },
+              { name: "市场调研", order: 1, taskCount: 1 },
+            ],
+            tasks: [
+              {
+                id: "task-1",
+                title: "市场调研",
+                stage: "市场调研",
+                status: "已完成",
+                owner: "market",
+                dependencies: [],
+                boardOrder: 0,
+                version: 1,
+              },
+              {
+                id: "task-2",
+                title: "立项",
+                stage: "待立项",
+                status: "进行中",
+                owner: "supervisor",
+                dependencies: [],
+                boardOrder: 0,
+                version: 1,
+              },
+            ],
+            members: [
+              { id: "supervisor", name: "主管", role: "reviewer" },
+              { id: "market", name: "市场负责人", role: "member" },
+            ],
+            constraints: {
+              priorities: ["低", "中", "高"],
+              taskTitleUnique: true,
+              defaultPosition: "node-end",
+              automaticDependency: false,
+            },
+          },
+        }),
+      );
+    if (
+      req.url === "/api/v1/projects/project-1/tasks/preview" &&
+      req.method === "POST"
+    ) {
+      let raw = "";
+      req.on("data", (chunk) => (raw += chunk));
+      return req.on("end", () => {
+        const body = JSON.parse(raw);
+        if (body.contextToken !== contextToken()) {
+          res.statusCode = 409;
+          return res.end(
+            JSON.stringify({
+              ok: false,
+              error: {
+                code: "PROJECT_STATE_CHANGED",
+                message: "state changed",
+              },
+            }),
+          );
+        }
+        res.end(
+          JSON.stringify({
+            ok: true,
+            data: {
+              dryRun: true,
+              contextToken: body.contextToken,
+              project: { id: "project-1", name: "Test", projectVersion },
+              task: {
+                title: body.title,
+                stage: body.stage,
+                owner: { id: body.owner || "supervisor", name: "主管" },
+                reviewer: { id: "supervisor", name: "主管" },
+                priority: "中",
+                dependencies: body.dependencies,
+                position: body.afterTaskId ? "after" : "append",
+                positionIndex: body.afterTaskId ? 1 : 0,
+              },
+            },
+          }),
+        );
+      });
+    }
+    if (
+      req.url === "/api/v1/projects/project-1/tasks" &&
+      req.method === "POST"
+    ) {
+      let raw = "";
+      req.on("data", (chunk) => (raw += chunk));
+      return req.on("end", () => {
+        lastTaskBody = JSON.parse(raw);
+        if (
+          req.headers["idempotency-key"] === "task-create-key" &&
+          lastTaskResult
+        )
+          return res.end(JSON.stringify({ ok: true, data: lastTaskResult }));
+        if (lastTaskBody.contextToken !== contextToken()) {
+          res.statusCode = 409;
+          return res.end(
+            JSON.stringify({
+              ok: false,
+              error: {
+                code: "PROJECT_STATE_CHANGED",
+                message: "state changed",
+              },
+            }),
+          );
+        }
+        taskCreates++;
+        projectVersion++;
+        lastTaskResult = {
+          project: { id: "project-1", name: "Test", projectVersion },
+          task: {
+            id: "task-new",
+            ...lastTaskBody,
+            version: 1,
+            contentStatus: "empty",
+          },
+          audit: { event: "task.created", actor: "supervisor" },
+        };
+        res.end(JSON.stringify({ ok: true, data: lastTaskResult }));
+      });
+    }
+    if (
+      req.url === "/api/v1/projects/project-1/tasks/by-id/task-new" &&
+      req.method === "GET"
+    )
+      return res.end(
+        JSON.stringify({
+          ok: true,
+          data: {
+            project: { id: "project-1", name: "Test", projectVersion },
+            task: {
+              id: "task-new",
+              ...lastTaskBody,
+              version: 1,
+              contentStatus: "empty",
+            },
+          },
+        }),
+      );
+    if (
       req.url?.startsWith(
         "/api/v1/projects/project-1/tasks/resolve/by-name?",
       ) &&
@@ -227,8 +387,10 @@ async function mockService(environment) {
     server,
     url: `http://127.0.0.1:${server.address().port}`,
     creates: () => creates,
+    taskCreates: () => taskCreates,
     deletes: () => deletes,
     lastCreateBody: () => lastCreateBody,
+    lastTaskBody: () => lastTaskBody,
   };
 }
 
@@ -317,6 +479,160 @@ test("read-only commands return directory, task list, and task records", async (
   assert.equal(detail.json.data.records.wiki.version, 2);
   assert.equal(mock.creates(), 0);
   assert.equal(mock.deletes(), 0);
+});
+
+test("task creation requires a current context, previews, writes, and reads back", async (t) => {
+  const mock = await mockService("development");
+  t.after(() => mock.server.close());
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), "procli-task-create-"));
+  t.after(() => fs.rm(home, { recursive: true, force: true }));
+  const env = { PROCLI_CONFIG_PATH: path.join(home, "config.json") };
+  await run(
+    [
+      "profile",
+      "add",
+      "local",
+      "--url",
+      mock.url,
+      "--environment",
+      "development",
+    ],
+    env,
+  );
+  await run(["profile", "use", "local"], env);
+
+  const context = await run(
+    ["task", "create-context", "--project", "Test"],
+    env,
+  );
+  assert.equal(context.code, 0);
+  assert.equal(context.json.data.project.projectVersion, 4);
+  assert.equal(context.json.data.contextToken, "context-4");
+  assert.equal(context.json.data.constraints.automaticDependency, false);
+
+  const missing = await run(
+    [
+      "task",
+      "create",
+      "--project",
+      "Test",
+      "--node",
+      "市场调研",
+      "--title",
+      "整理价格带",
+    ],
+    env,
+  );
+  assert.equal(missing.json.error.code, "ARGUMENT");
+  assert.equal(mock.taskCreates(), 0);
+
+  const dry = await run(
+    [
+      "task",
+      "create",
+      "--project",
+      "Test",
+      "--node",
+      "市场调研",
+      "--title",
+      "整理价格带",
+      "--description",
+      "统计前20款样本",
+      "--depends-on",
+      "市场调研",
+      "--after-task",
+      "市场调研",
+      "--context-token",
+      "context-4",
+      "--idempotency-key",
+      "task-create-key",
+      "--dry-run",
+    ],
+    env,
+  );
+  assert.equal(dry.code, 0);
+  assert.equal(dry.json.data.dryRun, true);
+  assert.equal(dry.json.data.task.position, "after");
+  assert.deepEqual(dry.json.data.task.dependencies, ["task-1"]);
+  assert.equal(mock.taskCreates(), 0);
+
+  const created = await run(
+    [
+      "task",
+      "create",
+      "--project",
+      "Test",
+      "--node",
+      "市场调研",
+      "--title",
+      "整理价格带",
+      "--description",
+      "统计前20款样本",
+      "--depends-on",
+      "市场调研",
+      "--after-task",
+      "市场调研",
+      "--context-token",
+      "context-4",
+      "--idempotency-key",
+      "task-create-key",
+    ],
+    env,
+  );
+  assert.equal(created.code, 0);
+  assert.equal(created.json.data.task.id, "task-new");
+  assert.equal(created.json.data.task.stage, "市场调研");
+  assert.equal(created.json.data.project.projectVersion, 5);
+  assert.equal(created.json.data.verification, "write-after-readback");
+  assert.equal(mock.taskCreates(), 1);
+  assert.deepEqual(mock.lastTaskBody().dependencies, ["task-1"]);
+
+  const retried = await run(
+    [
+      "task",
+      "create",
+      "--project",
+      "Test",
+      "--node",
+      "市场调研",
+      "--title",
+      "整理价格带",
+      "--description",
+      "统计前20款样本",
+      "--depends-on",
+      "市场调研",
+      "--after-task",
+      "市场调研",
+      "--context-token",
+      "context-4",
+      "--idempotency-key",
+      "task-create-key",
+    ],
+    env,
+  );
+  assert.equal(retried.code, 0);
+  assert.equal(retried.json.data.task.id, "task-new");
+  assert.equal(mock.taskCreates(), 1);
+
+  const stale = await run(
+    [
+      "task",
+      "create",
+      "--project",
+      "Test",
+      "--node",
+      "市场调研",
+      "--title",
+      "使用旧快照",
+      "--context-token",
+      "context-4",
+      "--dry-run",
+    ],
+    env,
+  );
+  assert.equal(stale.code, 1);
+  assert.equal(stale.json.error.code, "PROJECT_STATE_CHANGED");
+  assert.equal(mock.taskCreates(), 1);
 });
 
 test("custom SOP creation validates and sends node names with descriptions", async (t) => {
@@ -426,6 +742,59 @@ test("production writes require --yes", async (t) => {
   );
   assert.equal(created.code, 0);
   assert.equal(mock.creates(), 1);
+});
+
+test("production task creation requires --yes after authoritative preview", async (t) => {
+  const mock = await mockService("production");
+  t.after(() => mock.server.close());
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), "procli-task-prod-"));
+  t.after(() => fs.rm(home, { recursive: true, force: true }));
+  const env = { PROCLI_CONFIG_PATH: path.join(home, "config.json") };
+  await run(
+    ["profile", "add", "nas", "--url", mock.url, "--environment", "production"],
+    env,
+  );
+  const denied = await run(
+    [
+      "task",
+      "create",
+      "--project",
+      "Test",
+      "--node",
+      "市场调研",
+      "--title",
+      "生产任务",
+      "--context-token",
+      "context-4",
+      "--idempotency-key",
+      "production-task-key",
+    ],
+    env,
+  );
+  assert.equal(denied.code, 1);
+  assert.equal(denied.json.error.code, "CONFIRMATION_REQUIRED");
+  assert.equal(mock.taskCreates(), 0);
+  const created = await run(
+    [
+      "task",
+      "create",
+      "--project",
+      "Test",
+      "--node",
+      "市场调研",
+      "--title",
+      "生产任务",
+      "--context-token",
+      "context-4",
+      "--idempotency-key",
+      "production-task-key",
+      "--yes",
+    ],
+    env,
+  );
+  assert.equal(created.code, 0);
+  assert.equal(created.json.data.verification, "write-after-readback");
+  assert.equal(mock.taskCreates(), 1);
 });
 
 test("bundled Skill installs into an explicit target", async (t) => {

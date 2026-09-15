@@ -81,8 +81,8 @@ const taskView = (state: any, task: any) => {
 };
 const projectTasksInBoardOrder = (state: any, project: any) =>
   state.tasks
+    .filter((task: any) => task.projectId === project.id)
     .map((task: any, index: number) => ({ task, index }))
-    .filter(({ task }: any) => task.projectId === project.id)
     .sort((a: any, b: any) => {
       const stage =
         project.stages.indexOf(a.task.stage) -
@@ -91,6 +91,221 @@ const projectTasksInBoardOrder = (state: any, project: any) =>
       return (a.task.boardOrder ?? a.index) - (b.task.boardOrder ?? b.index);
     })
     .map(({ task }: any) => task);
+const projectVersion = (project: any) => Number(project.version || 0);
+const projectContextToken = (project: any) =>
+  createHash("sha256")
+    .update(`${project.id}:${projectVersion(project)}`)
+    .digest("base64url");
+const normalizedTextKey = (value: any, label: string) =>
+  required(value, label)
+    .normalize("NFKC")
+    .replace(/\s+/g, " ")
+    .toLocaleLowerCase("zh-CN");
+const memberByReference = (state: any, value: any, fallback: string) => {
+  const reference = String(value || fallback || "").trim();
+  const key = normalizedTextKey(reference, "负责人");
+  const matches = state.members.filter(
+    (member: any) =>
+      normalizedTextKey(member.id, "成员") === key ||
+      normalizedTextKey(member.name, "成员") === key,
+  );
+  if (!matches.length)
+    throw new Fault("MEMBER_NOT_FOUND", `成员不存在：${reference}`, 404);
+  if (matches.length > 1)
+    throw new Fault("MEMBER_AMBIGUOUS", `成员名称不唯一：${reference}`, 409);
+  return matches[0];
+};
+const taskCreatePlan = (state: any, project: any, body: any, who: string) => {
+  const title = required(body.title, "任务标题");
+  const titleKey = taskNameKey(title);
+  const projectTasks = projectTasksInBoardOrder(state, project);
+  if (projectTasks.some((task: any) => taskNameKey(task.title) === titleKey))
+    throw new Fault(
+      "TASK_NAME_CONFLICT",
+      `项目内任务名称已存在：${title}`,
+      409,
+    );
+  if (projectTasks.length >= 500)
+    throw new Fault("VALIDATION", "每个项目最多支持 500 个任务");
+  const stageKey = stageNameKey(body.stage);
+  const stage = project.stages.find(
+    (item: string) => stageNameKey(item) === stageKey,
+  );
+  if (!stage)
+    throw new Fault("NODE_NOT_FOUND", `节点不存在：${body.stage}`, 404);
+  const owner = memberByReference(state, body.owner, who);
+  const reviewer = memberByReference(state, body.reviewer, "supervisor");
+  const priorityAliases: Record<string, string> = {
+    low: "低",
+    medium: "中",
+    high: "高",
+    低: "低",
+    中: "中",
+    高: "高",
+  };
+  const priority = priorityAliases[String(body.priority || "中").toLowerCase()];
+  if (!priority) throw new Fault("VALIDATION", "无效优先级");
+  const dueDate = String(body.dueDate || "").trim();
+  if (dueDate && !/^\d{4}-\d{2}-\d{2}$/.test(dueDate))
+    throw new Fault("VALIDATION", "截止日期必须为 YYYY-MM-DD");
+  const dependencyIds = Array.isArray(body.dependencies)
+    ? body.dependencies
+    : [];
+  if (new Set(dependencyIds).size !== dependencyIds.length)
+    throw new Fault("INVALID_DEPENDENCY", "依赖任务不能重复");
+  const dependencies = dependencyIds.map((id: any) => {
+    const task = projectTasks.find((item: any) => item.id === id);
+    if (!task)
+      throw new Fault("INVALID_DEPENDENCY", `依赖任务不存在：${id}`, 409);
+    return task;
+  });
+  if (body.beforeTaskId && body.afterTaskId)
+    throw new Fault("VALIDATION", "--before-task 和 --after-task 不能同时使用");
+  const stageTasks = projectTasks.filter((task: any) => task.stage === stage);
+  let insertAt = stageTasks.length;
+  let referenceTask: any = null;
+  if (body.beforeTaskId || body.afterTaskId) {
+    const referenceId = body.beforeTaskId || body.afterTaskId;
+    referenceTask = stageTasks.find((task: any) => task.id === referenceId);
+    if (!referenceTask)
+      throw new Fault(
+        "POSITION_TASK_INVALID",
+        "定位任务必须存在于目标节点中",
+        409,
+      );
+    insertAt = stageTasks.indexOf(referenceTask) + (body.afterTaskId ? 1 : 0);
+  }
+  return {
+    title,
+    stage,
+    owner,
+    reviewer,
+    priority,
+    dueDate,
+    description: String(body.description || "").trim(),
+    criteria: String(body.criteria || "提供交付物并通过审核").trim(),
+    skill: String(body.skill || "").trim(),
+    dependencies,
+    insertAt,
+    referenceTask,
+    position: body.beforeTaskId
+      ? "before"
+      : body.afterTaskId
+        ? "after"
+        : "append",
+  };
+};
+const taskCreatePreview = (project: any, plan: any) => ({
+  project: {
+    id: project.id,
+    name: project.name,
+    projectVersion: projectVersion(project),
+  },
+  task: {
+    title: plan.title,
+    stage: plan.stage,
+    description: plan.description,
+    criteria: plan.criteria,
+    owner: { id: plan.owner.id, name: plan.owner.name },
+    reviewer: { id: plan.reviewer.id, name: plan.reviewer.name },
+    priority: plan.priority,
+    dueDate: plan.dueDate,
+    dependencies: plan.dependencies.map((task: any) => ({
+      id: task.id,
+      title: task.title,
+    })),
+    position: plan.position,
+    positionIndex: plan.insertAt,
+    referenceTask: plan.referenceTask
+      ? { id: plan.referenceTask.id, title: plan.referenceTask.title }
+      : null,
+  },
+});
+const requireProjectContext = (project: any, token: any) => {
+  if (typeof token !== "string" || !token)
+    throw new Fault("CONTEXT_TOKEN_REQUIRED", "缺少写前状态令牌", 409);
+  if (token !== projectContextToken(project))
+    throw new Fault(
+      "PROJECT_STATE_CHANGED",
+      "项目状态已发生变化，请重新读取写前快照",
+      409,
+    );
+};
+async function createTaskFromPlan(
+  state: any,
+  project: any,
+  plan: any,
+  who: string,
+  source: string,
+) {
+  const createdAt = now();
+  const stageTasks = projectTasksInBoardOrder(state, project).filter(
+    (task: any) => task.stage === plan.stage,
+  );
+  for (const task of stageTasks) {
+    const order = task.boardOrder ?? stageTasks.indexOf(task);
+    if (order >= plan.insertAt) {
+      task.boardOrder = order + 1;
+      task.version = Number(task.version || 0) + 1;
+      task.updatedAt = createdAt;
+    }
+  }
+  const task = {
+    id: uid(),
+    projectId: project.id,
+    title: plan.title,
+    stage: plan.stage,
+    status: "待开始",
+    contentStatus: "empty",
+    boardOrder: plan.insertAt,
+    owner: plan.owner.id,
+    reviewer: plan.reviewer.id,
+    priority: plan.priority,
+    description: plan.description,
+    criteria: plan.criteria,
+    dueDate: plan.dueDate,
+    skill: plan.skill,
+    dependencies: plan.dependencies.map((item: any) => item.id),
+    version: 1,
+    createdAt,
+    updatedAt: createdAt,
+    requiresEvidence: true,
+    wikiPath: `wiki/${uid()}.md`,
+  };
+  state.tasks.push(task);
+  await writeFile(
+    project.id,
+    task.wikiPath,
+    `# ${task.title}\n\n## 目标\n\n${task.description}\n\n## 输入与依据\n\n## 分析结论\n\n## 下一步\n`,
+  );
+  state.pages.push({
+    id: uid(),
+    projectId: project.id,
+    path: task.wikiPath,
+    title: task.title,
+    version: 1,
+    substantive: false,
+    updatedAt: createdAt,
+    history: [],
+  });
+  await writeFile(
+    project.id,
+    "wiki/index.md",
+    `# ${project.name}\n\n${project.goal || ""}\n\n` +
+      state.pages
+        .filter((page: any) => page.projectId === project.id)
+        .map((page: any) => `- [${page.title}](${path.basename(page.path)})`)
+        .join("\n"),
+  );
+  audit(state, who, "task.created", project.id, {
+    taskId: task.id,
+    title: task.title,
+    stage: task.stage,
+    boardOrder: task.boardOrder,
+    source,
+  });
+  return task;
+}
 async function removeEmptyTasks(state: any, tasks: any[], who: string) {
   const blocked = tasks.filter(
     (task: any) => taskContentStatus(state, task) !== "empty",
@@ -224,6 +439,8 @@ route("get", "/api/capabilities", () => ({
     "directory.list",
     "project.task.list",
     "project.task.read",
+    "project.task.create-context",
+    "project.task.create-preview",
     "project.create",
     "project.folder.create",
     "project.folder.move",
@@ -723,6 +940,102 @@ route("get", "/api/v1/projects/:id/tasks", async (req) => {
     })),
   };
 });
+route("get", "/api/v1/projects/:id/task-create-context", async (req) => {
+  const s: any = await read();
+  const project = activeProject(s.projects, req.params.id);
+  const tasks = projectTasksInBoardOrder(s, project);
+  return {
+    project: {
+      id: project.id,
+      name: project.name,
+      type: project.type,
+      status: project.status,
+      projectVersion: projectVersion(project),
+      updatedAt: project.updatedAt || project.createdAt,
+    },
+    contextToken: projectContextToken(project),
+    nodes: project.stages.map((name: string, order: number) => ({
+      name,
+      order,
+      taskCount: tasks.filter((task: any) => task.stage === name).length,
+    })),
+    tasks: tasks.map((task: any) => ({
+      id: task.id,
+      title: task.title,
+      stage: task.stage,
+      status: task.status,
+      contentStatus: taskContentStatus(s, task),
+      owner: task.owner,
+      dependencies: task.dependencies,
+      boardOrder: task.boardOrder ?? 0,
+      version: task.version,
+    })),
+    members: s.members.map((member: any) => ({
+      id: member.id,
+      name: member.name,
+      role: member.role,
+    })),
+    constraints: {
+      priorities: ["低", "中", "高"],
+      maxTasks: 500,
+      taskTitleScope: "project",
+      taskTitleUnique: true,
+      defaultPosition: "node-end",
+      automaticDependency: false,
+    },
+  };
+});
+route("post", "/api/v1/projects/:id/tasks/preview", async (req) => {
+  const s: any = await read();
+  const project = activeProject(s.projects, req.params.id);
+  requireProjectContext(project, req.body.contextToken);
+  const plan = taskCreatePlan(s, project, req.body, actor(req));
+  return {
+    dryRun: true,
+    contextToken: req.body.contextToken,
+    ...taskCreatePreview(project, plan),
+  };
+});
+route("post", "/api/v1/projects/:id/tasks", (req) =>
+  mutate(req, async (s: any, who: string) => {
+    const project = activeProject(s.projects, req.params.id);
+    requireProjectContext(project, req.body.contextToken);
+    const plan = taskCreatePlan(s, project, req.body, who);
+    const preview = taskCreatePreview(project, plan);
+    const task = await createTaskFromPlan(
+      s,
+      project,
+      plan,
+      who,
+      requestSource(req),
+    );
+    return {
+      project: {
+        id: project.id,
+        name: project.name,
+        projectVersion: projectVersion(project),
+      },
+      task: taskView(s, task),
+      preview,
+      audit: { event: "task.created", actor: who },
+    };
+  }),
+);
+route("get", "/api/v1/projects/:id/tasks/by-id/:taskId", async (req) => {
+  const s: any = await read();
+  const project = activeProject(s.projects, req.params.id);
+  const task = get(s.tasks, req.params.taskId, "任务");
+  if (task.projectId !== project.id)
+    throw new Fault("NOT_FOUND", "任务不存在", 404);
+  return {
+    project: {
+      id: project.id,
+      name: project.name,
+      projectVersion: projectVersion(project),
+    },
+    task: taskView(s, task),
+  };
+});
 route("get", "/api/v1/projects/:id/tasks/resolve/by-name", async (req) => {
   const s: any = await read();
   const project = activeProject(s.projects, req.params.id);
@@ -903,42 +1216,10 @@ route("put", "/api/projects/:id/board/order", (req) =>
   }),
 );
 route("post", "/api/tasks", (req) =>
-  mutate(req, (s: any, who: string) => {
+  mutate(req, async (s: any, who: string) => {
     const p = activeProject(s.projects, req.body.projectId);
-    const b = req.body;
-    if (!p.stages.includes(b.stage)) throw new Fault("VALIDATION", "无效阶段");
-    get(s.members, b.owner);
-    const t = {
-      id: uid(),
-      projectId: p.id,
-      title: required(b.title, "任务标题"),
-      stage: b.stage,
-      status: "待开始",
-      contentStatus: "empty",
-      boardOrder:
-        Math.max(
-          -1,
-          ...s.tasks
-            .filter(
-              (task: any) => task.projectId === p.id && task.stage === b.stage,
-            )
-            .map((task: any, index: number) => task.boardOrder ?? index),
-        ) + 1,
-      owner: b.owner,
-      reviewer: "supervisor",
-      priority: "中",
-      description: b.description || "",
-      criteria: b.criteria || "提供交付物并通过审核",
-      dueDate: b.dueDate || "",
-      dependencies: [],
-      version: 1,
-      createdAt: now(),
-      requiresEvidence: true,
-      wikiPath: `wiki/${uid()}.md`,
-    };
-    s.tasks.push(t);
-    audit(s, who, "task.created", p.id, { taskId: t.id, title: t.title });
-    return t;
+    const plan = taskCreatePlan(s, p, req.body, who);
+    return createTaskFromPlan(s, p, plan, who, requestSource(req));
   }),
 );
 route("delete", "/api/tasks/:id", (req) =>
@@ -970,7 +1251,23 @@ route("patch", "/api/tasks/:id", (req) =>
     ])
       if (k in req.body) {
         if (["owner", "reviewer"].includes(k)) get(s.members, req.body[k]);
-        if (k === "title") required(req.body[k], "标题");
+        if (k === "title") {
+          const title = required(req.body[k], "标题");
+          const key = taskNameKey(title);
+          if (
+            s.tasks.some(
+              (item: any) =>
+                item.projectId === project.id &&
+                item.id !== t.id &&
+                taskNameKey(item.title) === key,
+            )
+          )
+            throw new Fault(
+              "TASK_NAME_CONFLICT",
+              `项目内任务名称已存在：${title}`,
+              409,
+            );
+        }
         if (k === "stage" && !project.stages.includes(req.body[k]))
           throw new Fault("VALIDATION", "无效阶段");
         if (k === "priority" && !["低", "中", "高"].includes(req.body[k]))

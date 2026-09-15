@@ -86,6 +86,70 @@
       ]
     },
     {
+      "id": "project.service.task.create",
+      "purpose": "Create one task from a compact current project snapshot with server preview, project-scoped optimistic concurrency, and post-write verification",
+      "required": true,
+      "required_features": [
+        "profile_selection",
+        "target_identity_verification",
+        "compact_prewrite_snapshot",
+        "exact_project_resolution",
+        "exact_node_resolution",
+        "member_and_task_reference_resolution",
+        "server_dry_run",
+        "project_scoped_optimistic_concurrency",
+        "idempotent_write",
+        "production_confirmation",
+        "post_write_readback",
+        "structured_json"
+      ],
+      "input_fields": [
+        "profile",
+        "project",
+        "node",
+        "title",
+        "description",
+        "criteria",
+        "owner",
+        "reviewer",
+        "priority",
+        "due_date",
+        "depends_on",
+        "before_task",
+        "after_task",
+        "skill",
+        "context_token",
+        "idempotency_key"
+      ],
+      "output_fields": [
+        "target",
+        "project",
+        "task",
+        "project_version",
+        "idempotency_key",
+        "verification"
+      ],
+      "side_effects": {
+        "external_mutation": true,
+        "may_cost_money": false,
+        "authorization": "The user must explicitly intend to add the task. A fresh project context and server preview are required; production additionally requires CLI confirmation."
+      },
+      "errors": [
+        "AUTH_REQUIRED",
+        "CONTEXT_TOKEN_REQUIRED",
+        "PROJECT_STATE_CHANGED",
+        "TASK_NAME_CONFLICT",
+        "NODE_NOT_FOUND",
+        "MEMBER_NOT_FOUND",
+        "MEMBER_AMBIGUOUS",
+        "INVALID_DEPENDENCY",
+        "POSITION_TASK_INVALID",
+        "CONFIRMATION_REQUIRED",
+        "PROVIDER_FAILURE",
+        "OUTPUT_CONTRACT_FAILED"
+      ]
+    },
+    {
       "id": "project.service.project.create",
       "purpose": "Create one project in the selected project-management service and verify its generated structure",
       "required": true,

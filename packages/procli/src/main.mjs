@@ -16,7 +16,7 @@ import {
 import { inspectTarget, request } from "./client.mjs";
 import { installSkill, skillSource, skillStatus } from "./skill.mjs";
 
-const VERSION = "0.3.0";
+const VERSION = "0.4.0";
 const help = `procli ${VERSION} — Agent-first project management CLI
 
 Profile（默认 nas）：
@@ -31,6 +31,13 @@ Profile（默认 nas）：
   directory list
   task list --project PROJECT_NAME
   task get --project PROJECT_NAME --task TASK_NAME
+  task create-context --project PROJECT_NAME
+  task create --project PROJECT_NAME --node NODE_NAME --title TASK_NAME
+              --context-token TOKEN [--description TEXT] [--criteria TEXT]
+              [--owner MEMBER] [--reviewer MEMBER] [--priority low|medium|high|低|中|高]
+              [--due-date YYYY-MM-DD] [--depends-on TASK_NAME[,TASK_NAME...]]
+              [--before-task TASK_NAME | --after-task TASK_NAME]
+              [--idempotency-key KEY] [--dry-run] [--yes]
   project create --name NAME [--goal TEXT] [--type product] [--sop-file FILE]
                  [--mode agent] [--idempotency-key KEY] [--dry-run] [--yes]
   project delete --name NAME --confirm-name NAME --yes
@@ -179,6 +186,82 @@ async function resolveProject(profile, name) {
       `/api/v1/projects/resolve/by-name?name=${encodeURIComponent(name)}`,
     )
   ).data.project;
+}
+
+const exactKey = (value) =>
+  String(value)
+    .normalize("NFKC")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLocaleLowerCase("zh-CN");
+
+function exactNamed(items, reference, fields, code, label) {
+  const key = exactKey(reference);
+  const matches = items.filter((item) =>
+    fields.some((field) => exactKey(item[field]) === key),
+  );
+  if (!matches.length) throw new CliError(code, `${label}不存在：${reference}`);
+  if (matches.length > 1)
+    throw new CliError(`${code}_AMBIGUOUS`, `${label}不唯一：${reference}`, {
+      candidates: matches.map((item) => ({
+        id: item.id,
+        title: item.title,
+        name: item.name,
+      })),
+    });
+  return matches[0];
+}
+
+async function taskCreateContext(profile, project) {
+  return (
+    await request(
+      profile,
+      `/api/v1/projects/${encodeURIComponent(project.id)}/task-create-context`,
+    )
+  ).data;
+}
+
+function taskCreateInput(options, context) {
+  const node = exactNamed(
+    context.nodes,
+    required(options, "node"),
+    ["name"],
+    "NODE_NOT_FOUND",
+    "节点",
+  );
+  const resolveTask = (name) =>
+    exactNamed(context.tasks, name, ["id", "title"], "TASK_NOT_FOUND", "任务");
+  const dependencies = String(options["depends-on"] || "")
+    .split(/[,，]/)
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .map((name) => resolveTask(name).id);
+  const before = options["before-task"]
+    ? resolveTask(options["before-task"])
+    : null;
+  const after = options["after-task"]
+    ? resolveTask(options["after-task"])
+    : null;
+  if (before && after)
+    throw new CliError(
+      "ARGUMENT",
+      "--before-task 和 --after-task 不能同时使用",
+    );
+  return {
+    contextToken: required(options, "context-token"),
+    title: required(options, "title"),
+    stage: node.name,
+    description: options.description || "",
+    criteria: options.criteria || "",
+    owner: options.owner || "",
+    reviewer: options.reviewer || "",
+    priority: options.priority || "medium",
+    dueDate: options["due-date"] || "",
+    skill: options.skill || "",
+    dependencies,
+    beforeTaskId: before?.id || "",
+    afterTaskId: after?.id || "",
+  };
 }
 
 export async function main(argv) {
@@ -393,6 +476,79 @@ export async function main(argv) {
       `/api/v1/projects/${encodeURIComponent(project.id)}/tasks/resolve/by-name?name=${encodeURIComponent(taskName)}`,
     );
     return output({ target, ...result.data });
+  }
+  if (group === "task" && command === "create-context") {
+    const target = await inspectTarget(profile);
+    const project = await resolveProject(profile, required(options, "project"));
+    const context = await taskCreateContext(profile, project);
+    return output({ target, ...context });
+  }
+  if (group === "task" && command === "create") {
+    const target = await inspectTarget(profile);
+    const project = await resolveProject(profile, required(options, "project"));
+    const context = await taskCreateContext(profile, project);
+    const input = taskCreateInput(options, context);
+    const idempotencyKey = options["idempotency-key"] || crypto.randomUUID();
+    let preview;
+    try {
+      preview = await request(
+        profile,
+        `/api/v1/projects/${encodeURIComponent(project.id)}/tasks/preview`,
+        { method: "POST", body: input },
+      );
+    } catch (error) {
+      if (options["dry-run"] || error.code !== "PROJECT_STATE_CHANGED")
+        throw error;
+      // A retry after an unknown write result may legitimately carry the old
+      // context token. The write endpoint resolves the original idempotency
+      // key before evaluating that stale token; a new attempt still fails.
+      preview = null;
+    }
+    if (options["dry-run"])
+      return output({
+        target,
+        idempotencyKey,
+        currentContext: {
+          projectVersion: context.project.projectVersion,
+          contextToken: context.contextToken,
+        },
+        ...preview.data,
+      });
+    if (target.environment === "production" && !options.yes)
+      throw new CliError(
+        "CONFIRMATION_REQUIRED",
+        "目标是生产环境；确认添加任务后请增加 --yes",
+        { target, preview: preview?.data || null },
+      );
+    const created = await request(
+      profile,
+      `/api/v1/projects/${encodeURIComponent(project.id)}/tasks`,
+      { method: "POST", body: input, idempotencyKey },
+    );
+    const readback = await request(
+      profile,
+      `/api/v1/projects/${encodeURIComponent(project.id)}/tasks/by-id/${encodeURIComponent(created.data.task.id)}`,
+    );
+    if (
+      readback.data.task.id !== created.data.task.id ||
+      readback.data.task.title !== input.title ||
+      readback.data.task.stage !== input.stage ||
+      Number(readback.data.project.projectVersion) <
+        Number(created.data.project.projectVersion)
+    )
+      throw new CliError(
+        "OUTPUT_CONTRACT_FAILED",
+        "任务写入后的回读结果与创建结果不一致",
+        { taskId: created.data.task.id },
+      );
+    return output({
+      target,
+      idempotencyKey,
+      project: readback.data.project,
+      task: readback.data.task,
+      audit: created.data.audit,
+      verification: "write-after-readback",
+    });
   }
   if (group === "project" && command === "create") {
     const target = await inspectTarget(profile);

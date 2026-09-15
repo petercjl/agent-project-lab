@@ -1,7 +1,7 @@
 {
   "schemaVersion": "1",
   "name": "procli",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "defaultProfile": "nas",
   "capabilities": [
     {
@@ -41,6 +41,54 @@
         "targetVerification",
         "structuredJson"
       ]
+    },
+    {
+      "id": "task.create-context",
+      "command": "procli task create-context",
+      "effect": "read",
+      "risk": "low",
+      "requiredInputs": ["project"],
+      "optionalInputs": ["profile"],
+      "supports": [
+        "projectNameResolution",
+        "targetVerification",
+        "compactStateSnapshot",
+        "projectScopedVersion",
+        "contextToken",
+        "structuredJson"
+      ]
+    },
+    {
+      "id": "task.create",
+      "command": "procli task create",
+      "effect": "write",
+      "risk": "medium",
+      "requiredInputs": ["project", "node", "title", "contextToken"],
+      "optionalInputs": [
+        "description",
+        "criteria",
+        "owner",
+        "reviewer",
+        "priority",
+        "dueDate",
+        "dependsOn",
+        "beforeTask",
+        "afterTask",
+        "profile",
+        "idempotencyKey"
+      ],
+      "supports": [
+        "prewriteContextSnapshot",
+        "serverDryRun",
+        "optimisticConcurrency",
+        "projectScopedVersion",
+        "idempotency",
+        "exactNodeResolution",
+        "exactTaskReferenceResolution",
+        "postWriteReadback",
+        "structuredJson"
+      ],
+      "productionConfirmation": true
     },
     {
       "id": "project.create",

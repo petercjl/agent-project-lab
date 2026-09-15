@@ -33,6 +33,19 @@ procli task get --project "新品项目" --task "完成市场与竞品调研"
 
 `task get` 返回节点当前状态、状态历史、依赖、活动记录、Agent 运行、交付物、Wiki 元数据和通知。
 
+添加任务需要先读取精简写前快照。预演和真实写入使用同一个 `contextToken` 和幂等键；如果期间网页端或其他 Agent 修改了项目，写入会返回 `PROJECT_STATE_CHANGED`：
+
+```bash
+procli task create-context --project "新品项目" --json
+procli task create --project "新品项目" --node "市场调研" \
+  --title "整理亚马逊热销款价格带" \
+  --description "统计前20款商品的价格、销量和主要卖点" \
+  --context-token "<create-context 返回的令牌>" \
+  --idempotency-key "<同一逻辑尝试的 UUID>" --dry-run --json
+```
+
+本地 Profile 确认预演后移除 `--dry-run` 即可写入；生产 Profile 还需要 `--yes`。新任务默认添加到节点末尾，可使用 `--before-task`、`--after-task` 指定位置，使用 `--depends-on` 显式指定依赖。
+
 商品项目默认生成标准生命周期 SOP。Agent 也可以提交自定义 SOP；每个节点都必须有名称和工作说明：
 
 ```json

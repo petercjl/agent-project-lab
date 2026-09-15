@@ -78,6 +78,35 @@
       "normalization": "Use the procli JSON envelope without reinterpretation."
     },
     {
+      "capability_id": "project.service.task.create",
+      "implementation": {
+        "kind": "stable-cli",
+        "discovery": "Resolve procli from PATH and verify it with procli version and procli capabilities --json.",
+        "execution": "Resolve the exact project, run procli task create-context, compose exact task inputs from the returned snapshot, then run procli task create with one context token and idempotency key through preview, write, and readback.",
+        "normalization": "Use the procli JSON envelope without reinterpretation."
+      },
+      "features": [
+        "profile_selection",
+        "target_identity_verification",
+        "compact_prewrite_snapshot",
+        "exact_project_resolution",
+        "exact_node_resolution",
+        "member_and_task_reference_resolution",
+        "server_dry_run",
+        "project_scoped_optimistic_concurrency",
+        "idempotent_write",
+        "production_confirmation",
+        "post_write_readback",
+        "structured_json"
+      ],
+      "status": "implemented",
+      "permissions": [
+        "Network access to the selected service",
+        "Authenticated permission to add a task"
+      ],
+      "normalization": "Use the procli JSON envelope without reinterpretation."
+    },
+    {
       "capability_id": "project.service.project.create",
       "implementation": {
         "kind": "stable-cli",

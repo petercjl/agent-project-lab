@@ -130,7 +130,10 @@ export function audit(
   const createdAt = now();
   if (projectId) {
     const project = s.projects.find((item: any) => item.id === projectId);
-    if (project) project.updatedAt = createdAt;
+    if (project) {
+      project.version = Number(project.version || 0) + 1;
+      project.updatedAt = createdAt;
+    }
   }
   s.events.push({
     id: uid(),

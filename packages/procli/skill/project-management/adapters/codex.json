@@ -90,6 +90,40 @@
       ]
     },
     {
+      "capability_id": "project.service.task.create",
+      "implementation": {
+        "kind": "stable-cli",
+        "discovery": "Resolve procli from PATH and verify it with procli version and procli capabilities --json.",
+        "execution": "Resolve the exact project, run procli task create-context, compose exact task inputs from the returned snapshot, then run procli task create with one context token and idempotency key through preview, write, and readback.",
+        "normalization": "Use the procli JSON envelope without reinterpretation."
+      },
+      "features": [
+        "profile_selection",
+        "target_identity_verification",
+        "compact_prewrite_snapshot",
+        "exact_project_resolution",
+        "exact_node_resolution",
+        "member_and_task_reference_resolution",
+        "server_dry_run",
+        "project_scoped_optimistic_concurrency",
+        "idempotent_write",
+        "production_confirmation",
+        "post_write_readback",
+        "structured_json"
+      ],
+      "status": "tested",
+      "permissions": [
+        "Network access to the selected service",
+        "Authenticated permission to add a task"
+      ],
+      "normalization": "Use the procli JSON envelope without reinterpretation.",
+      "tested_date": "2026-09-15",
+      "evidence": [
+        "Codex used procli 0.4.0 against the authenticated local development Profile to read a compact project snapshot, preview and create a task after an exact task reference, advance the project version, create its empty Wiki page, and verify the task by ID readback.",
+        "Codex retried the completed write with the same idempotency key and received the original task without duplication; a different task using the stale context token returned PROJECT_STATE_CHANGED and left the task count unchanged."
+      ]
+    },
+    {
       "capability_id": "project.service.project.create",
       "implementation": {
         "kind": "stable-cli",
