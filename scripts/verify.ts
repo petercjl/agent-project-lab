@@ -103,7 +103,55 @@ try {
     "IDEMPOTENCY_CONFLICT",
   );
   checks++;
+  const folderName = `自动验收归档 ${key}`;
+  const folder = await ok(
+    "/project-folders",
+    "POST",
+    { name: folderName },
+    "agent",
+    `folder-${Date.now()}`,
+  );
+  assert.equal(
+    (
+      await api(
+        "/project-folders",
+        "POST",
+        { name: ` ${folderName} ` },
+        "agent",
+        `folder-duplicate-${Date.now()}`,
+      )
+    ).error.code,
+    "FOLDER_NAME_CONFLICT",
+  );
+  const moved = await ok(
+    `/v1/projects/${p.id}/folder`,
+    "PATCH",
+    { folderId: folder.id },
+    "agent",
+    `move-${Date.now()}`,
+  );
+  assert.equal(moved.folderId, folder.id);
+  assert(
+    new Date(moved.updatedAt).getTime() >= new Date(moved.createdAt).getTime(),
+  );
+  checks += 3;
   let s = await ok("/state");
+  assert.equal(
+    s.folders.some((item: any) => item.id === folder.id),
+    true,
+  );
+  assert.equal(
+    s.projects.find((item: any) => item.id === p.id).folderId,
+    folder.id,
+  );
+  assert.equal(
+    s.events.some(
+      (event: any) =>
+        event.projectId === p.id && event.type === "project.moved",
+    ),
+    true,
+  );
+  checks += 3;
   const ts = s.tasks.filter((t: any) => t.projectId === p.id),
     t = ts[0],
     next = ts[1];
@@ -421,6 +469,27 @@ try {
   const errors: string[] = [];
   pageUI.on("pageerror", (e) => errors.push(e.message));
   await pageUI.goto("http://127.0.0.1:4318");
+  await pageUI.getByLabel("项目排序字段").selectOption("name");
+  await pageUI.getByLabel("切换排序方向").click();
+  await pageUI
+    .locator(".folder-title")
+    .filter({ hasText: folderName })
+    .first()
+    .waitFor();
+  await pageUI.getByLabel(`管理项目 ${p.name}`, { exact: true }).click();
+  await pageUI.locator(".project-menu[open] label").waitFor();
+  await pageUI
+    .locator(".project-menu[open]")
+    .getByRole("button", { name: "删除项目", exact: true })
+    .waitFor();
+  checks += 2;
+  await pageUI.getByLabel(`管理项目 ${p.name}`, { exact: true }).click();
+  await pageUI.getByRole("button", { name: "＋ 文件夹", exact: true }).click();
+  await pageUI
+    .getByRole("heading", { name: "新建文件夹", exact: true })
+    .waitFor();
+  await pageUI.getByRole("button", { name: "×", exact: true }).click();
+  checks++;
   await pageUI
     .getByRole("button", { name: "＋ 创建项目", exact: true })
     .click();

@@ -133,28 +133,146 @@ aside {
   border-color: #3a557a;
   margin: 8px 0 16px;
 }
+.directory-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 8px 7px;
+  color: #8197b3;
+  font-size: 11px;
+}
+.directory-head button {
+  border: 0;
+  padding: 4px 0;
+  background: transparent;
+  color: #a9bdd5;
+  font-size: 10px;
+}
+.project-sort {
+  display: flex;
+  gap: 5px;
+  padding: 0 4px 9px;
+}
+.project-sort select {
+  min-width: 0;
+  flex: 1;
+  border-color: #3a506c;
+  background: #203450;
+  color: #bdcbe0;
+  padding: 6px 7px;
+  font-size: 10px;
+}
+.project-sort button {
+  width: 31px;
+  border-color: #3a506c;
+  background: #203450;
+  color: #bdcbe0;
+  padding: 5px;
+}
 .project-list {
   overflow: auto;
+  padding-bottom: 20px;
 }
-.project-list button {
+.project-group {
+  margin: 4px 0 10px;
+}
+.folder-title {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 9px 4px;
+  color: #7f95b1;
+  font-size: 10px;
+  text-transform: none;
+}
+.folder-title small {
+  color: #607996;
+}
+.project-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  position: relative;
+  margin: 3px 0;
+  border-radius: 7px;
+}
+.project-row.selected {
+  background: #314b70;
+}
+.project-select {
   display: flex;
   gap: 9px;
-  width: 100%;
+  min-width: 0;
+  flex: 1;
   text-align: left;
-  margin: 4px 0;
   background: transparent;
   border: 0;
   color: #aebed2;
-  padding: 13px 10px;
+  padding: 11px 5px 11px 10px;
   font-size: 12px;
 }
-.project-list button.selected {
-  background: #314b70;
+.project-row.selected .project-select {
   color: white;
 }
-.project-list span {
+.project-select span {
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-menu {
+  flex: 0 0 auto;
+}
+.project-menu[open] {
+  flex-basis: 100%;
+}
+.project-menu[open] summary {
+  position: absolute;
+  top: 0;
+  right: 0;
+}
+.project-menu summary {
+  width: 28px;
+  padding: 9px 5px;
+  color: #8ea5c1;
+  cursor: pointer;
+  list-style: none;
+  font-size: 10px;
+}
+.project-menu summary::-webkit-details-marker {
+  display: none;
+}
+.project-row:hover .project-menu summary,
+.project-menu[open] summary {
+  color: white;
+}
+.project-menu > div {
+  width: auto;
+  margin: 0 7px 8px;
+  padding: 10px;
+  border: 1px solid #dce3ec;
+  border-radius: 8px;
+  background: white;
+  color: #52647c;
+  box-shadow: 0 12px 35px rgb(12 27 47 / 24%);
+}
+.project-menu label {
+  display: block;
+  font-size: 10px;
+}
+.project-menu select {
+  width: 100%;
+  margin-top: 6px;
+  font-size: 11px;
+}
+.project-menu .menu-delete {
+  width: 100%;
+  margin-top: 9px;
+  border-color: #f0d3d3;
+  color: #b54848;
+  font-size: 11px;
+}
+.project-menu .menu-delete:hover {
+  background: #fff2f2;
+  border-color: #dfaaaa;
 }
 .import {
   font-size: 12px;
@@ -900,6 +1018,9 @@ th {
   border-radius: 14px;
   background: white;
   box-shadow: 0 24px 80px rgb(15 30 52 / 28%);
+}
+.compact-modal {
+  width: min(430px, 100%);
 }
 .modal-head {
   display: flex;

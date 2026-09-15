@@ -114,6 +114,7 @@ route("get", "/api/state", async () => {
   );
   return {
     ...state,
+    folders: state.folders || [],
     projects: state.projects.filter((project: any) =>
       activeIds.has(project.id),
     ),
@@ -138,6 +139,8 @@ route("get", "/api/capabilities", () => ({
   version: "1",
   actions: [
     "project.create",
+    "project.folder.create",
+    "project.folder.move",
     "project.delete",
     "project.export",
     "project.restore",
@@ -188,6 +191,63 @@ route("get", "/api/capabilities", () => ({
           warning: "仅用于自动测试；x-actor 是角色模拟",
         },
 }));
+route("post", "/api/project-folders", (req) =>
+  mutate(req, (s: any, who: string) => {
+    s.folders ||= [];
+    const name = required(req.body.name, "文件夹名称");
+    const key = name
+      .normalize("NFKC")
+      .replace(/\s+/g, " ")
+      .toLocaleLowerCase("zh-CN");
+    if (
+      s.folders.some(
+        (folder: any) =>
+          folder.nameKey === key ||
+          folder.name
+            .normalize("NFKC")
+            .replace(/\s+/g, " ")
+            .toLocaleLowerCase("zh-CN") === key,
+      )
+    )
+      throw new Fault("FOLDER_NAME_CONFLICT", `文件夹名称已存在：${name}`, 409);
+    const folder = {
+      id: uid(),
+      name,
+      nameKey: key,
+      createdAt: now(),
+      updatedAt: now(),
+      createdBy: who,
+    };
+    s.folders.push(folder);
+    audit(s, who, "folder.created", "", {
+      folderId: folder.id,
+      name: folder.name,
+      source: requestSource(req),
+    });
+    return folder;
+  }),
+);
+route("patch", "/api/v1/projects/:id/folder", (req) =>
+  mutate(req, (s: any, who: string) => {
+    s.folders ||= [];
+    const project = activeProject(s.projects, req.params.id);
+    const folderId =
+      req.body.folderId === null || req.body.folderId === ""
+        ? null
+        : required(req.body.folderId, "文件夹");
+    const folder = folderId ? get(s.folders, folderId, "文件夹") : null;
+    const previousFolderId = project.folderId || null;
+    project.folderId = folder?.id || null;
+    audit(s, who, "project.moved", project.id, {
+      name: project.name,
+      fromFolderId: previousFolderId,
+      toFolderId: project.folderId,
+      toFolderName: folder?.name || "未归档",
+      source: requestSource(req),
+    });
+    return project;
+  }),
+);
 async function createProjectRequest(req: any, detailed = false) {
   if (
     req.body.template &&
@@ -780,6 +840,7 @@ route("post", "/api/projects/restore", (req) =>
       await writeFile(id, rel, Buffer.from(String(b), "base64"));
     const project = remap(d.project);
     project.name += "（恢复副本）";
+    project.folderId = null;
     project.createdAt = now();
     s.projects.push(project);
     for (const k of [

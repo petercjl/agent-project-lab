@@ -127,13 +127,18 @@ export function audit(
   projectId: string,
   details: any,
 ) {
+  const createdAt = now();
+  if (projectId) {
+    const project = s.projects.find((item: any) => item.id === projectId);
+    if (project) project.updatedAt = createdAt;
+  }
   s.events.push({
     id: uid(),
     actor,
     type,
     projectId,
     details,
-    createdAt: now(),
+    createdAt,
   });
 }
 export function filePath(projectId: string, relative: string) {

@@ -24,7 +24,16 @@ function App() {
     [projectName, NAME] = useS(""),
     [projectGoal, GOAL] = useS(""),
     [deleteOpen, DELETE] = useS(false),
-    [deleteName, DELETE_NAME] = useS("");
+    [deleteName, DELETE_NAME] = useS(""),
+    [deleteTarget, DELETE_TARGET] = useS<any>(null),
+    [folderOpen, FOLDER_OPEN] = useS(false),
+    [folderName, FOLDER_NAME] = useS(""),
+    [sortBy, SORT_BY] = useS(
+      localStorage.getItem("project-sort-by") || "updatedAt",
+    ),
+    [sortDirection, SORT_DIRECTION] = useS(
+      localStorage.getItem("project-sort-direction") || "desc",
+    );
   async function api(
     url: string,
     method = "GET",
@@ -97,6 +106,10 @@ function App() {
     localStorage.setItem("actor", actor);
   }, [actor]);
   useE(() => {
+    localStorage.setItem("project-sort-by", sortBy);
+    localStorage.setItem("project-sort-direction", sortDirection);
+  }, [sortBy, sortDirection]);
+  useE(() => {
     if (pid && tab === "Wiki")
       api(`/projects/${pid}/wiki?path=${encodeURIComponent(page)}`)
         .then((d) => {
@@ -114,6 +127,36 @@ function App() {
     pages = s?.pages.filter((x: any) => x.projectId === pid) || [],
     member = (id: string) =>
       s?.members.find((m: any) => m.id === id)?.name || id;
+  const folders = s?.folders || [];
+  const folderIds = new Set(folders.map((folder: any) => folder.id));
+  const sortedProjects = [...(s?.projects || [])].sort((a: any, b: any) => {
+    const value = (item: any) =>
+      sortBy === "name"
+        ? item.name
+        : sortBy === "createdAt"
+          ? item.createdAt
+          : item.updatedAt || item.createdAt;
+    const result = String(value(a) || "").localeCompare(
+      String(value(b) || ""),
+      "zh-CN",
+      {
+        numeric: true,
+        sensitivity: "base",
+      },
+    );
+    return sortDirection === "asc" ? result : -result;
+  });
+  const projectGroups = [
+    { id: "", name: "未归档" },
+    ...folders.map((folder: any) => ({ id: folder.id, name: folder.name })),
+  ].map((folder: any) => ({
+    ...folder,
+    projects: sortedProjects.filter((project: any) =>
+      folder.id
+        ? project.folderId === folder.id
+        : !project.folderId || !folderIds.has(project.folderId),
+    ),
+  }));
   const local = (v: string) =>
     v ? new Date(v).toLocaleString("zh-CN", { hour12: false }) : "—";
   const ready = (t: any) =>
@@ -149,18 +192,55 @@ function App() {
     });
   }
   async function removeProject() {
-    if (!p || deleteName !== p.name) return;
+    if (!deleteTarget || deleteName !== deleteTarget.name) return;
     await act(async () => {
       await api(
         "/v1/projects/by-name",
         "DELETE",
-        { expectedName: p.name },
+        { expectedName: deleteTarget.name },
         { "idempotency-key": crypto.randomUUID() },
       );
-      P("");
+      if (pid === deleteTarget.id) P("");
       DELETE(false);
       DELETE_NAME("");
+      DELETE_TARGET(null);
     });
+  }
+  function startDelete(project: any) {
+    if (!auth.isAdmin)
+      return alert("只有管理员可以删除项目，请联系管理员处理。");
+    DELETE_TARGET(project);
+    DELETE_NAME("");
+    DELETE(true);
+  }
+  async function createFolder() {
+    await act(async () => {
+      await api(
+        "/project-folders",
+        "POST",
+        { name: folderName },
+        { "idempotency-key": crypto.randomUUID() },
+      );
+      FOLDER_NAME("");
+      FOLDER_OPEN(false);
+    });
+  }
+  async function moveProject(project: any, folderId: string) {
+    await act(() =>
+      api(
+        `/v1/projects/${project.id}/folder`,
+        "PATCH",
+        { folderId: folderId || null },
+        { "idempotency-key": crypto.randomUUID() },
+      ),
+    );
+  }
+  function selectProject(project: any) {
+    if (dirty && !confirm("有未保存内容，确认切换？")) return;
+    P(project.id);
+    W("wiki/index.md");
+    D(null);
+    DIR(false);
   }
   function download(name: string, data: any) {
     const u = URL.createObjectURL(
@@ -249,21 +329,82 @@ function App() {
         <button className="new-project" onClick={() => CREATE(true)}>
           ＋ 创建项目
         </button>
+        <div className="directory-head">
+          <span>项目目录</span>
+          <button title="新建文件夹" onClick={() => FOLDER_OPEN(true)}>
+            ＋ 文件夹
+          </button>
+        </div>
+        <div className="project-sort">
+          <select
+            aria-label="项目排序字段"
+            value={sortBy}
+            onChange={(event) => SORT_BY(event.target.value)}
+          >
+            <option value="updatedAt">修改时间</option>
+            <option value="createdAt">创建时间</option>
+            <option value="name">项目名称</option>
+          </select>
+          <button
+            aria-label="切换排序方向"
+            title={sortDirection === "asc" ? "当前升序" : "当前降序"}
+            onClick={() =>
+              SORT_DIRECTION(sortDirection === "asc" ? "desc" : "asc")
+            }
+          >
+            {sortDirection === "asc" ? "↑" : "↓"}
+          </button>
+        </div>
         <div className="project-list">
-          {s.projects.map((x: any) => (
-            <button
-              key={x.id}
-              className={pid === x.id ? "selected" : ""}
-              onClick={() => {
-                if (dirty && !confirm("有未保存内容，确认切换？")) return;
-                P(x.id);
-                W("wiki/index.md");
-                D(null);
-                DIR(false);
-              }}
-            >
-              ▣ <span>{x.name}</span>
-            </button>
+          {projectGroups.map((group: any) => (
+            <section className="project-group" key={group.id || "unfiled"}>
+              <div className="folder-title">
+                <span>
+                  {group.id ? "▾" : "⌂"} {group.name}
+                </span>
+                <small>{group.projects.length}</small>
+              </div>
+              {group.projects.map((x: any) => (
+                <div
+                  className={`project-row ${pid === x.id ? "selected" : ""}`}
+                  key={x.id}
+                >
+                  <button
+                    className="project-select"
+                    onClick={() => selectProject(x)}
+                  >
+                    ▣ <span>{x.name}</span>
+                  </button>
+                  <details className="project-menu">
+                    <summary aria-label={`管理项目 ${x.name}`}>•••</summary>
+                    <div>
+                      <label>
+                        移动到文件夹
+                        <select
+                          value={x.folderId || ""}
+                          onChange={(event) =>
+                            moveProject(x, event.target.value)
+                          }
+                        >
+                          <option value="">未归档</option>
+                          {folders.map((folder: any) => (
+                            <option key={folder.id} value={folder.id}>
+                              {folder.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <button
+                        className="menu-delete"
+                        onClick={() => startDelete(x)}
+                      >
+                        删除项目
+                      </button>
+                    </div>
+                  </details>
+                </div>
+              ))}
+            </section>
           ))}
         </div>
         <label className="import">
@@ -307,10 +448,7 @@ function App() {
               <button
                 className="danger-ghost"
                 onClick={() => {
-                  if (!auth.isAdmin)
-                    return alert("只有管理员可以删除项目，请联系管理员处理。");
-                  DELETE_NAME("");
-                  DELETE(true);
+                  startDelete(p);
                 }}
               >
                 删除项目
@@ -1003,7 +1141,45 @@ function App() {
             </section>
           </div>
         )}
-        {deleteOpen && p && (
+        {folderOpen && (
+          <div
+            className="modal-backdrop"
+            onMouseDown={() => FOLDER_OPEN(false)}
+          >
+            <section
+              className="modal compact-modal"
+              onMouseDown={(event) => event.stopPropagation()}
+            >
+              <div className="modal-head">
+                <div>
+                  <small>PROJECT DIRECTORY</small>
+                  <h2>新建文件夹</h2>
+                </div>
+                <button onClick={() => FOLDER_OPEN(false)}>×</button>
+              </div>
+              <label>
+                文件夹名称 <span>*</span>
+                <input
+                  autoFocus
+                  value={folderName}
+                  onChange={(event) => FOLDER_NAME(event.target.value)}
+                  placeholder="例如：2026 新品项目"
+                />
+              </label>
+              <div className="modal-actions">
+                <button onClick={() => FOLDER_OPEN(false)}>取消</button>
+                <button
+                  className="primary"
+                  disabled={busy || !folderName.trim()}
+                  onClick={createFolder}
+                >
+                  创建文件夹
+                </button>
+              </div>
+            </section>
+          </div>
+        )}
+        {deleteOpen && deleteTarget && (
           <div className="modal-backdrop" onMouseDown={() => DELETE(false)}>
             <section
               className="modal danger-modal"
@@ -1025,14 +1201,14 @@ function App() {
                   autoFocus
                   value={deleteName}
                   onChange={(event) => DELETE_NAME(event.target.value)}
-                  placeholder={p.name}
+                  placeholder={deleteTarget.name}
                 />
               </label>
               <div className="modal-actions">
                 <button onClick={() => DELETE(false)}>取消</button>
                 <button
                   className="danger"
-                  disabled={busy || deleteName !== p.name}
+                  disabled={busy || deleteName !== deleteTarget.name}
                   onClick={removeProject}
                 >
                   确认删除
