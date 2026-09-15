@@ -23,4 +23,25 @@ procli --profile nas project create --name "NAS 测试项目" --goal "验证最�
 procli project create --name "新品项目" --goal "完成市场验证与上市" --yes
 ```
 
+商品项目默认生成标准生命周期 SOP。Agent 也可以提交自定义 SOP；每个节点都必须有名称和工作说明：
+
+```json
+{
+  "nodes": [{ "name": "验证需求", "description": "取得真实用户证据并形成结论" }]
+}
+```
+
+```bash
+procli project create --name "新品验证" --sop-file ./sop.json
+```
+
+删除项目仅允许系统管理员执行，必须先预览、精确复述项目名称并显式确认。删除是可恢复的软删除：
+
+```bash
+procli project delete --name "新品验证" --confirm-name "新品验证" --dry-run
+procli project delete --name "新品验证" --confirm-name "新品验证" --yes
+```
+
+店铺项目和企业项目已保留为后续能力，目前 CLI 会返回 `FEATURE_UNSUPPORTED`。
+
 配置和每个 Profile 的个人凭证保存在用户配置目录，不进入 npm 包或项目仓库。运行 `procli doctor --json` 查看当前 Profile、服务指纹和认证状态。

@@ -259,7 +259,10 @@ try {
       "--environment",
       "development",
     ],
-    { encoding: "utf8", env: { ...process.env, PROCLI_CONFIG_PATH: procliConfig } },
+    {
+      encoding: "utf8",
+      env: { ...process.env, PROCLI_CONFIG_PATH: procliConfig },
+    },
   );
   const dry = JSON.parse(
     execFileSync(
@@ -274,7 +277,10 @@ try {
         "dry",
         "--dry-run",
       ],
-      { encoding: "utf8", env: { ...process.env, PROCLI_CONFIG_PATH: procliConfig } },
+      {
+        encoding: "utf8",
+        env: { ...process.env, PROCLI_CONFIG_PATH: procliConfig },
+      },
     ),
   );
   assert.equal(dry.data.dryRun, true);
@@ -296,13 +302,116 @@ try {
         "--idempotency-key",
         `procli-verify-${Date.now()}`,
       ],
-      { encoding: "utf8", env: { ...process.env, PROCLI_CONFIG_PATH: procliConfig } },
+      {
+        encoding: "utf8",
+        env: { ...process.env, PROCLI_CONFIG_PATH: procliConfig },
+      },
     ),
   );
   assert.equal(createdByCli.ok, true);
   assert.equal(createdByCli.data.target.profile, "local");
   assert.equal(createdByCli.data.tasks.count, 7);
   assert.equal(createdByCli.data.wiki.count, 8);
+  const customName = `自定义 SOP 验收 ${Date.now()}`;
+  const custom = await ok(
+    "/v1/projects",
+    "POST",
+    {
+      name: customName,
+      type: "product",
+      sop: {
+        nodes: [
+          { name: "验证需求", description: "验证真实用户需求" },
+          { name: "立项评审", description: "汇总证据并形成结论" },
+        ],
+      },
+    },
+    "agent",
+    `custom-${Date.now()}`,
+  );
+  assert.equal(custom.project.sopMode, "custom");
+  assert.equal(custom.tasks.count, 2);
+  const customTask = await ok("/tasks", "POST", {
+    projectId: custom.project.id,
+    title: "补充验证",
+    stage: custom.project.stages[0],
+    owner: "agent",
+  });
+  assert.equal(
+    (
+      await api(
+        "/v1/projects",
+        "POST",
+        { name: ` ${customName} ` },
+        "agent",
+        `duplicate-${Date.now()}`,
+      )
+    ).error.code,
+    "PROJECT_NAME_CONFLICT",
+  );
+  assert.equal(
+    (
+      await api(
+        "/v1/projects/by-name",
+        "DELETE",
+        { expectedName: customName },
+        "agent",
+        `denied-${Date.now()}`,
+      )
+    ).error.code,
+    "ADMIN_REQUIRED",
+  );
+  assert.equal(
+    (
+      await api(
+        "/v1/projects/by-name",
+        "DELETE",
+        { expectedName: customName.toLowerCase() },
+        "supervisor",
+        `mismatch-${Date.now()}`,
+      )
+    ).error.code,
+    "DELETE_CONFIRMATION_MISMATCH",
+  );
+  const removed = await ok(
+    "/v1/projects/by-name",
+    "DELETE",
+    { expectedName: customName },
+    "supervisor",
+    `delete-${Date.now()}`,
+  );
+  assert.equal(removed.recoverable, true);
+  assert.equal(
+    (
+      await ok(
+        `/v1/deleted-projects/${removed.projectId}`,
+        "GET",
+        undefined,
+        "supervisor",
+      )
+    ).project.name,
+    customName,
+  );
+  assert.equal(
+    (await api(`/v1/projects/${removed.projectId}`)).error.code,
+    "NOT_FOUND",
+  );
+  assert.equal(
+    (
+      await api(`/tasks/${customTask.id}`, "PATCH", {
+        version: 1,
+        title: "不可修改",
+      })
+    ).error.code,
+    "NOT_FOUND",
+  );
+  assert.equal(
+    (await ok("/state")).projects.some(
+      (item: any) => item.id === removed.projectId,
+    ),
+    false,
+  );
+  checks += 10;
   await fs.rm(procliHome, { recursive: true, force: true });
   checks++;
   browser = await chromium.launch({ headless: true });
@@ -312,6 +421,22 @@ try {
   const errors: string[] = [];
   pageUI.on("pageerror", (e) => errors.push(e.message));
   await pageUI.goto("http://127.0.0.1:4318");
+  await pageUI
+    .getByRole("button", { name: "＋ 创建项目", exact: true })
+    .click();
+  await pageUI
+    .getByRole("heading", { name: "创建项目", exact: true })
+    .waitFor();
+  assert.equal(
+    await pageUI.getByRole("button", { name: /店铺项目/ }).isDisabled(),
+    true,
+  );
+  assert.equal(
+    await pageUI.getByRole("button", { name: /企业项目/ }).isDisabled(),
+    true,
+  );
+  await pageUI.getByRole("button", { name: "×", exact: true }).click();
+  checks++;
   await pageUI
     .getByRole("button", { name: "▣ " + p.name, exact: true })
     .click();

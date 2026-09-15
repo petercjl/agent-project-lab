@@ -23,6 +23,7 @@ import {
   required,
   stages,
   statuses,
+  projectNameKey,
 } from "./domain.ts";
 const app = express();
 app.use(express.json({ limit: "100mb" }));
@@ -44,6 +45,25 @@ const get = (arr: any[], id: string, label = "记录") => {
   if (!v) throw new Fault("NOT_FOUND", `${label}不存在`, 404);
   return v;
 };
+const activeProject = (projects: any[], id: string) => {
+  const project = get(projects, id, "项目");
+  if (project.deletedAt) throw new Fault("NOT_FOUND", "项目不存在", 404);
+  return project;
+};
+const requireAdmin = (req: any) => {
+  if (req.auth?.systemRole !== "admin")
+    throw new Fault(
+      "ADMIN_REQUIRED",
+      "只有系统管理员可以删除项目，请联系管理员处理",
+      403,
+    );
+};
+const requestSource = (req: any) =>
+  req.auth?.kind === "cli"
+    ? "cli"
+    : req.auth?.kind === "development"
+      ? "development"
+      : "web";
 async function mutate(req: any, fn: any) {
   const who = actor(req);
   return change(
@@ -76,7 +96,7 @@ route("get", "/api/health", async () => {
   await read();
   return {
     status: "ready",
-    version: "0.1.0",
+    version: "0.2.0",
     apiVersion: "1",
     environment: process.env.APP_ENV || "development",
     instanceId: process.env.INSTANCE_ID || "local-development",
@@ -85,11 +105,40 @@ route("get", "/api/health", async () => {
     notifications: "local",
   };
 });
-route("get", "/api/state", () => read());
+route("get", "/api/state", async () => {
+  const state: any = await read();
+  const activeIds = new Set(
+    state.projects
+      .filter((project: any) => !project.deletedAt)
+      .map((project: any) => project.id),
+  );
+  return {
+    ...state,
+    projects: state.projects.filter((project: any) =>
+      activeIds.has(project.id),
+    ),
+    tasks: state.tasks.filter((item: any) => activeIds.has(item.projectId)),
+    pages: state.pages.filter((item: any) => activeIds.has(item.projectId)),
+    artifacts: state.artifacts.filter((item: any) =>
+      activeIds.has(item.projectId),
+    ),
+    runs: state.runs.filter((item: any) => activeIds.has(item.projectId)),
+    events: state.events.filter(
+      (item: any) => !item.projectId || activeIds.has(item.projectId),
+    ),
+    notifications: state.notifications.filter((item: any) =>
+      activeIds.has(item.projectId),
+    ),
+    measurements: state.measurements.filter((item: any) =>
+      activeIds.has(item.projectId),
+    ),
+  };
+});
 route("get", "/api/capabilities", () => ({
   version: "1",
   actions: [
     "project.create",
+    "project.delete",
     "project.export",
     "project.restore",
     "task.create",
@@ -108,7 +157,20 @@ route("get", "/api/capabilities", () => ({
     "run.finish",
     "measurement.add",
   ],
-  templates: [{ id: "ecommerce-v1", name: "商品全生命周期", stages }],
+  projectTypes: [
+    { id: "product", name: "商品项目", available: true },
+    { id: "shop", name: "店铺项目", available: false, status: "TODO" },
+    { id: "company", name: "企业项目", available: false, status: "TODO" },
+  ],
+  templates: [
+    {
+      id: "product-sop-v1",
+      legacyId: "ecommerce-v1",
+      name: "商品全生命周期",
+      stages,
+      customSop: true,
+    },
+  ],
   auth:
     authConfig().mode === "dingtalk"
       ? {
@@ -127,8 +189,11 @@ route("get", "/api/capabilities", () => ({
         },
 }));
 async function createProjectRequest(req: any, detailed = false) {
-  if (req.body.template && req.body.template !== "ecommerce-v1")
-    throw new Fault("VALIDATION", "当前只支持模板 ecommerce-v1");
+  if (
+    req.body.template &&
+    !["ecommerce-v1", "product-sop-v1"].includes(req.body.template)
+  )
+    throw new Fault("VALIDATION", "当前只支持商品项目 SOP 模板");
   return mutate(req, async (s: any, who: string) => {
     const p = makeProject(s, req.body);
     const tasks = s.tasks.filter((x: any) => x.projectId === p.id);
@@ -158,9 +223,15 @@ async function createProjectRequest(req: any, detailed = false) {
     await writeFile(
       p.id,
       "project.yaml",
-      `id: ${p.id}\nname: ${JSON.stringify(p.name)}\ntemplate: ecommerce-v1\n`,
+      `id: ${p.id}\nname: ${JSON.stringify(p.name)}\ntype: ${p.type}\ntemplate: ${p.template}\nsopMode: ${p.sopMode}\n`,
     );
-    audit(s, who, "project.created", p.id, { name: p.name });
+    audit(s, who, "project.created", p.id, {
+      name: p.name,
+      type: p.type,
+      sopMode: p.sopMode,
+      taskCount: tasks.length,
+      source: requestSource(req),
+    });
     if (!detailed) return p;
     return {
       project: p,
@@ -185,12 +256,10 @@ async function createProjectRequest(req: any, detailed = false) {
   });
 }
 route("post", "/api/projects", (req) => createProjectRequest(req));
-route("post", "/api/v1/projects", (req) =>
-  createProjectRequest(req, true),
-);
+route("post", "/api/v1/projects", (req) => createProjectRequest(req, true));
 route("get", "/api/v1/projects/:id", async (req) => {
   const s: any = await read();
-  const project = get(s.projects, req.params.id, "项目");
+  const project = activeProject(s.projects, req.params.id);
   const tasks = s.tasks.filter((task: any) => task.projectId === project.id);
   return {
     project,
@@ -212,6 +281,69 @@ route("get", "/api/v1/projects/:id", async (req) => {
     },
   };
 });
+route("get", "/api/v1/projects/resolve/by-name", async (req) => {
+  const s: any = await read();
+  const key = projectNameKey(req.query.name);
+  const project = s.projects.find(
+    (item: any) => !item.deletedAt && projectNameKey(item.name) === key,
+  );
+  if (!project) throw new Fault("NOT_FOUND", "项目不存在", 404);
+  return {
+    project,
+    taskCount: s.tasks.filter((item: any) => item.projectId === project.id)
+      .length,
+    wikiCount:
+      s.pages.filter((item: any) => item.projectId === project.id).length + 1,
+  };
+});
+route("delete", "/api/v1/projects/by-name", (req) => {
+  requireAdmin(req);
+  return mutate(req, (s: any, who: string) => {
+    const expectedName = required(req.body.expectedName, "确认项目名称");
+    const key = projectNameKey(expectedName);
+    const project = s.projects.find(
+      (item: any) => !item.deletedAt && projectNameKey(item.name) === key,
+    );
+    if (!project) throw new Fault("NOT_FOUND", "项目不存在", 404);
+    if (project.name !== expectedName)
+      throw new Fault(
+        "DELETE_CONFIRMATION_MISMATCH",
+        "确认名称必须与项目名称完全一致",
+        409,
+      );
+    project.deletedAt = now();
+    project.deletedBy = who;
+    project.status = "deleted";
+    const taskCount = s.tasks.filter(
+      (item: any) => item.projectId === project.id,
+    ).length;
+    const wikiCount =
+      s.pages.filter((item: any) => item.projectId === project.id).length + 1;
+    audit(s, who, "project.deleted", project.id, {
+      name: project.name,
+      taskCount,
+      wikiCount,
+      recoverable: true,
+      source: requestSource(req),
+    });
+    return {
+      projectId: project.id,
+      projectName: project.name,
+      deletedAt: project.deletedAt,
+      deletedBy: who,
+      taskCount,
+      wikiCount,
+      recoverable: true,
+    };
+  });
+});
+route("get", "/api/v1/deleted-projects/:id", async (req) => {
+  requireAdmin(req);
+  const s: any = await read();
+  const project = get(s.projects, req.params.id, "已删除项目");
+  if (!project.deletedAt) throw new Fault("NOT_FOUND", "已删除项目不存在", 404);
+  return { project };
+});
 route("post", "/api/members", (req) =>
   mutate(req, (s: any, who: string) => {
     const m = {
@@ -226,9 +358,9 @@ route("post", "/api/members", (req) =>
 );
 route("post", "/api/tasks", (req) =>
   mutate(req, (s: any, who: string) => {
-    const p = get(s.projects, req.body.projectId);
+    const p = activeProject(s.projects, req.body.projectId);
     const b = req.body;
-    if (!stages.includes(b.stage)) throw new Fault("VALIDATION", "无效阶段");
+    if (!p.stages.includes(b.stage)) throw new Fault("VALIDATION", "无效阶段");
     get(s.members, b.owner);
     const t = {
       id: uid(),
@@ -256,6 +388,7 @@ route("post", "/api/tasks", (req) =>
 route("patch", "/api/tasks/:id", (req) =>
   mutate(req, (s: any, who: string) => {
     const t = get(s.tasks, req.params.id);
+    const project = activeProject(s.projects, t.projectId);
     if (req.body.version !== t.version)
       throw new Fault("VERSION_CONFLICT", "任务已更新，请刷新后重试", 409);
     const before = { ...t };
@@ -273,7 +406,7 @@ route("patch", "/api/tasks/:id", (req) =>
       if (k in req.body) {
         if (["owner", "reviewer"].includes(k)) get(s.members, req.body[k]);
         if (k === "title") required(req.body[k], "标题");
-        if (k === "stage" && !stages.includes(req.body[k]))
+        if (k === "stage" && !project.stages.includes(req.body[k]))
           throw new Fault("VALIDATION", "无效阶段");
         if (k === "priority" && !["低", "中", "高"].includes(req.body[k]))
           throw new Fault("VALIDATION", "无效优先级");
@@ -295,6 +428,7 @@ route("patch", "/api/tasks/:id", (req) =>
 route("post", "/api/tasks/:id/actions/:action", (req) =>
   mutate(req, (s: any, who: string) => {
     const t = get(s.tasks, req.params.id);
+    activeProject(s.projects, t.projectId);
     if (req.body.version !== undefined && req.body.version !== t.version)
       throw new Fault("VERSION_CONFLICT", "任务已更新，请刷新", 409);
     const before = { ...t };
@@ -311,7 +445,7 @@ route("post", "/api/tasks/:id/actions/:action", (req) =>
 );
 route("get", "/api/projects/:id/wiki", async (req: any) => {
   const s = await read();
-  get(s.projects, req.params.id);
+  activeProject(s.projects, req.params.id);
   const rel = String(req.query.path || "wiki/index.md");
   const page = s.pages.find(
     (p: any) => p.projectId === req.params.id && p.path === rel,
@@ -323,7 +457,7 @@ route("get", "/api/projects/:id/wiki", async (req: any) => {
 });
 route("put", "/api/projects/:id/wiki", (req) =>
   mutate(req, async (s: any, who: string) => {
-    get(s.projects, req.params.id);
+    activeProject(s.projects, req.params.id);
     const rel = required(req.body.path, "路径");
     if (!rel.startsWith("wiki/") || !rel.endsWith(".md"))
       throw new Fault("VALIDATION", "Wiki 使用 wiki/ 下的 .md 文件");
@@ -375,7 +509,7 @@ route("put", "/api/projects/:id/wiki", (req) =>
 );
 route("get", "/api/projects/:id/search", async (req: any) => {
   const s = await read();
-  get(s.projects, req.params.id);
+  activeProject(s.projects, req.params.id);
   const q = String(req.query.q || "").toLowerCase();
   if (!q) return [];
   const results = [];
@@ -405,6 +539,7 @@ app.post(
       if (!req.file) throw new Fault("VALIDATION", "请选择文件");
       const a = await mutate(req, async (s: any, who: string) => {
         const t = get(s.tasks, req.params.id);
+        activeProject(s.projects, t.projectId);
         const id = uid();
         const name = Buffer.from(req.file.originalname, "latin1")
           .toString("utf8")
@@ -433,7 +568,9 @@ app.post(
 );
 app.get("/api/artifacts/:id/download", async (req, res, next) => {
   try {
-    const a = get((await read()).artifacts, req.params.id);
+    const s: any = await read();
+    const a = get(s.artifacts, req.params.id);
+    activeProject(s.projects, a.projectId);
     res.download(await safeFile(a.projectId, a.path), a.name);
   } catch (e) {
     next(e);
@@ -442,6 +579,7 @@ app.get("/api/artifacts/:id/download", async (req, res, next) => {
 route("post", "/api/runs", (req) =>
   mutate(req, (s: any, who: string) => {
     const t = get(s.tasks, req.body.taskId);
+    activeProject(s.projects, t.projectId);
     const r = {
       id: uid(),
       projectId: t.projectId,
@@ -461,6 +599,7 @@ route("post", "/api/runs", (req) =>
 route("patch", "/api/runs/:id", (req) =>
   mutate(req, (s: any, who: string) => {
     const r = get(s.runs, req.params.id);
+    activeProject(s.projects, r.projectId);
     if (r.status !== "running")
       throw new Fault("INVALID_STATE", "运行已经结束", 409);
     if (!["completed", "failed"].includes(req.body.status))
@@ -477,7 +616,7 @@ route("patch", "/api/runs/:id", (req) =>
 );
 route("post", "/api/measurements", (req) =>
   mutate(req, (s: any, who: string) => {
-    get(s.projects, req.body.projectId);
+    activeProject(s.projects, req.body.projectId);
     const b = req.body;
     if (
       !["manual", "agent"].includes(b.mode) ||
@@ -505,13 +644,14 @@ route("post", "/api/measurements", (req) =>
 route("post", "/api/notifications/:id/read", (req) =>
   mutate(req, (s: any) => {
     const n = get(s.notifications, req.params.id);
+    activeProject(s.projects, n.projectId);
     n.readAt = now();
     return n;
   }),
 );
 async function exportProject(id: string) {
   const s = await read();
-  const project = get(s.projects, id);
+  const project = activeProject(s.projects, id);
   const subset: any = { project, members: s.members };
   for (const k of [
     "tasks",

@@ -18,8 +18,19 @@ function App() {
     [query, Q] = useS(""),
     [results, R] = useS<any[]>([]),
     [busy, BUS] = useS(false),
-    [filter, F] = useS("全部");
-  async function api(url: string, method = "GET", body?: any) {
+    [filter, F] = useS("全部"),
+    [createOpen, CREATE] = useS(false),
+    [projectType, TYPE] = useS("product"),
+    [projectName, NAME] = useS(""),
+    [projectGoal, GOAL] = useS(""),
+    [deleteOpen, DELETE] = useS(false),
+    [deleteName, DELETE_NAME] = useS("");
+  async function api(
+    url: string,
+    method = "GET",
+    body?: any,
+    extraHeaders: Record<string, string> = {},
+  ) {
     const r = await fetch("/api" + url, {
       method,
       headers: {
@@ -27,6 +38,7 @@ function App() {
         ...(!(body instanceof FormData)
           ? { "content-type": "application/json" }
           : {}),
+        ...extraHeaders,
       },
       body:
         body === undefined
@@ -44,7 +56,11 @@ function App() {
   async function refresh() {
     const d = await api("/state");
     S(d);
-    P((p) => p || d.projects[0]?.id || "");
+    P((p) =>
+      d.projects.some((item: any) => item.id === p)
+        ? p
+        : d.projects[0]?.id || "",
+    );
     D((t: any) => (t ? d.tasks.find((x: any) => x.id === t.id) : null));
   }
   async function act(fn: () => Promise<any>) {
@@ -111,18 +127,40 @@ function App() {
     T(t);
   }
   async function create() {
-    const name = prompt("项目名称", "新的商品项目");
-    if (name)
-      await act(async () => {
-        const n = await api("/projects", "POST", {
-          name,
-          goal: prompt("项目目标") || "",
+    if (projectType !== "product") return;
+    await act(async () => {
+      const result = await api(
+        "/v1/projects",
+        "POST",
+        {
+          name: projectName,
+          goal: projectGoal,
+          type: "product",
           mode: "agent",
-        });
-        P(n.id);
-        T("看板");
-        W("wiki/index.md");
-      });
+        },
+        { "idempotency-key": crypto.randomUUID() },
+      );
+      P(result.project.id);
+      T("看板");
+      W("wiki/index.md");
+      CREATE(false);
+      NAME("");
+      GOAL("");
+    });
+  }
+  async function removeProject() {
+    if (!p || deleteName !== p.name) return;
+    await act(async () => {
+      await api(
+        "/v1/projects/by-name",
+        "DELETE",
+        { expectedName: p.name },
+        { "idempotency-key": crypto.randomUUID() },
+      );
+      P("");
+      DELETE(false);
+      DELETE_NAME("");
+    });
   }
   function download(name: string, data: any) {
     const u = URL.createObjectURL(
@@ -208,8 +246,8 @@ function App() {
         <div className="side-label">
           工作空间 <span>{auth.mode === "dingtalk" ? "DINGTALK" : "DEV"}</span>
         </div>
-        <button className="new-project" onClick={create}>
-          ＋ 创建商品项目
+        <button className="new-project" onClick={() => CREATE(true)}>
+          ＋ 创建项目
         </button>
         <div className="project-list">
           {s.projects.map((x: any) => (
@@ -265,6 +303,19 @@ function App() {
             <p>{p?.goal || "让 Agent 执行工作，让项目沉淀知识。"}</p>
           </div>
           <div className="identity">
+            {p && (
+              <button
+                className="danger-ghost"
+                onClick={() => {
+                  if (!auth.isAdmin)
+                    return alert("只有管理员可以删除项目，请联系管理员处理。");
+                  DELETE_NAME("");
+                  DELETE(true);
+                }}
+              >
+                删除项目
+              </button>
+            )}
             {auth.mode === "development" ? (
               <>
                 <small>开发角色模拟</small>
@@ -309,7 +360,7 @@ function App() {
             <div className="hero-icon">◈</div>
             <h2>从一个商品，开始验证 AI 协作</h2>
             <p>基于商品生命周期生成任务，用 Wiki 保存依据与交付物。</p>
-            <button className="primary" onClick={create}>
+            <button className="primary" onClick={() => CREATE(true)}>
               创建第一个项目
             </button>
           </section>
@@ -688,10 +739,14 @@ function App() {
                 <div className="callout">
                   <h3>Agent 与人共用同一套项目数据</h3>
                   <p>
-                    通过 procli 的 Profile 选择本地开发或 NAS 生产服务；首个正式能力用于创建包含任务与 Wiki 的商品项目。
+                    通过 procli 的 Profile 选择本地开发或 NAS
+                    生产服务；首个正式能力用于创建包含任务与 Wiki 的商品项目。
                   </p>
                   <code>procli profile current --json</code>
-                  <code>procli project create --name 商品项目 --goal 明确目标 --dry-run --json</code>
+                  <code>
+                    procli project create --name 商品项目 --goal 明确目标
+                    --dry-run --json
+                  </code>
                 </div>
                 <h2>执行记录</h2>
                 {s.runs
@@ -883,6 +938,108 @@ function App() {
               </section>
             )}
           </>
+        )}
+        {createOpen && (
+          <div className="modal-backdrop" onMouseDown={() => CREATE(false)}>
+            <section
+              className="modal"
+              onMouseDown={(event) => event.stopPropagation()}
+            >
+              <div className="modal-head">
+                <div>
+                  <small>NEW PROJECT</small>
+                  <h2>创建项目</h2>
+                </div>
+                <button onClick={() => CREATE(false)}>×</button>
+              </div>
+              <label>项目类型</label>
+              <div className="type-grid">
+                <button
+                  className={projectType === "product" ? "chosen" : ""}
+                  onClick={() => TYPE("product")}
+                >
+                  <b>商品项目</b>
+                  <small>商品全生命周期 SOP</small>
+                </button>
+                <button disabled>
+                  <b>店铺项目</b>
+                  <small>TODO · 即将开放</small>
+                </button>
+                <button disabled>
+                  <b>企业项目</b>
+                  <small>TODO · 即将开放</small>
+                </button>
+              </div>
+              <label>
+                项目名称 <span>*</span>
+                <input
+                  autoFocus
+                  value={projectName}
+                  onChange={(event) => NAME(event.target.value)}
+                  placeholder="例如：ERM 保温杯项目"
+                />
+              </label>
+              <label>
+                项目目标 <small>选填</small>
+                <textarea
+                  value={projectGoal}
+                  onChange={(event) => GOAL(event.target.value)}
+                  placeholder="Agent 将把目标写入项目 Wiki"
+                />
+              </label>
+              <p className="modal-note">
+                将按默认商品 SOP 初始化 7 个任务节点及对应 Wiki 页面。
+              </p>
+              <div className="modal-actions">
+                <button onClick={() => CREATE(false)}>取消</button>
+                <button
+                  className="primary"
+                  disabled={busy || !projectName.trim()}
+                  onClick={create}
+                >
+                  创建商品项目
+                </button>
+              </div>
+            </section>
+          </div>
+        )}
+        {deleteOpen && p && (
+          <div className="modal-backdrop" onMouseDown={() => DELETE(false)}>
+            <section
+              className="modal danger-modal"
+              onMouseDown={(event) => event.stopPropagation()}
+            >
+              <div className="modal-head">
+                <div>
+                  <small>ADMIN ACTION</small>
+                  <h2>删除项目</h2>
+                </div>
+                <button onClick={() => DELETE(false)}>×</button>
+              </div>
+              <p>
+                项目将从所有员工的项目清单中隐藏，数据和审计记录仍会保留，可由管理员恢复。
+              </p>
+              <label>
+                请输入项目完整名称以确认 <span>*</span>
+                <input
+                  autoFocus
+                  value={deleteName}
+                  onChange={(event) => DELETE_NAME(event.target.value)}
+                  placeholder={p.name}
+                />
+              </label>
+              <div className="modal-actions">
+                <button onClick={() => DELETE(false)}>取消</button>
+                <button
+                  className="danger"
+                  disabled={busy || deleteName !== p.name}
+                  onClick={removeProject}
+                >
+                  确认删除
+                </button>
+              </div>
+            </section>
+          </div>
         )}
         <footer>本地预演环境 · 角色切换用于验证流程，不代表生产权限认证</footer>
       </main>

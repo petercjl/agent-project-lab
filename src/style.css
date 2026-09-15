@@ -222,6 +222,15 @@ header p {
 .identity button {
   font-size: 12px;
 }
+.danger-ghost {
+  color: #b44f4f;
+  border-color: #efd1d1;
+}
+.danger-ghost:hover {
+  color: #9f3030;
+  background: #fff3f3;
+  border-color: #e5aaaa;
+}
 nav {
   display: flex;
   gap: 28px;
@@ -874,6 +883,103 @@ th {
   border-radius: 50%;
   object-fit: cover;
   background: #e8edf5;
+}
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(18 32 53 / 48%);
+  backdrop-filter: blur(2px);
+}
+.modal {
+  width: min(560px, 100%);
+  padding: 26px;
+  border-radius: 14px;
+  background: white;
+  box-shadow: 0 24px 80px rgb(15 30 52 / 28%);
+}
+.modal-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 22px;
+}
+.modal-head h2 {
+  margin: 5px 0 0;
+}
+.modal-head > button {
+  border: 0;
+  font-size: 20px;
+}
+.modal > label {
+  display: block;
+  margin: 17px 0 7px;
+  color: #596b83;
+  font-size: 12px;
+}
+.modal > label > span {
+  color: #c54848;
+}
+.modal > label input,
+.modal > label textarea {
+  display: block;
+  width: 100%;
+  margin-top: 7px;
+}
+.modal > label textarea {
+  min-height: 84px;
+  resize: vertical;
+}
+.type-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 9px;
+}
+.type-grid button {
+  min-height: 74px;
+  text-align: left;
+}
+.type-grid b,
+.type-grid small {
+  display: block;
+}
+.type-grid small {
+  margin-top: 7px;
+}
+.type-grid button.chosen {
+  border-color: #4c82d2;
+  background: #eff5ff;
+  color: #275fae;
+}
+.modal-note {
+  margin: 18px 0 0;
+  padding: 11px 13px;
+  border-radius: 7px;
+  background: #f3f6fa;
+  color: #718198;
+  font-size: 12px;
+}
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 9px;
+  margin-top: 24px;
+}
+button.danger {
+  border-color: #b93d3d;
+  background: #b93d3d;
+  color: white;
+}
+button.danger:hover {
+  border-color: #9f2f2f;
+  background: #9f2f2f;
+}
+.danger-modal > p {
+  color: #6e7e91;
+  line-height: 1.7;
 }
 @media (max-width: 900px) {
   aside {

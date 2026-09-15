@@ -17,8 +17,23 @@
         "post_write_readback",
         "structured_json"
       ],
-      "input_fields": ["profile", "name", "goal", "template", "mode", "idempotency_key"],
-      "output_fields": ["target", "project", "tasks", "wiki", "idempotency_key"],
+      "input_fields": [
+        "profile",
+        "name",
+        "goal",
+        "type",
+        "template",
+        "sop_file",
+        "mode",
+        "idempotency_key"
+      ],
+      "output_fields": [
+        "target",
+        "project",
+        "tasks",
+        "wiki",
+        "idempotency_key"
+      ],
       "side_effects": {
         "external_mutation": true,
         "may_cost_money": false,
@@ -29,6 +44,46 @@
         "AUTH_REQUIRED",
         "PERMISSION_REQUIRED",
         "PROVIDER_FAILURE",
+        "OUTPUT_CONTRACT_FAILED",
+        "PROJECT_NAME_CONFLICT",
+        "SOP_NODE_INCOMPLETE",
+        "FEATURE_UNSUPPORTED"
+      ]
+    },
+    {
+      "id": "project.service.project.delete",
+      "purpose": "Soft-delete one exactly named project as a system administrator and verify the deletion",
+      "required": true,
+      "required_features": [
+        "profile_selection",
+        "target_identity_verification",
+        "dry_run",
+        "admin_authorization",
+        "exact_name_confirmation",
+        "idempotent_write",
+        "post_write_readback",
+        "structured_json"
+      ],
+      "input_fields": ["profile", "name", "confirm_name", "idempotency_key"],
+      "output_fields": [
+        "target",
+        "project_id",
+        "project_name",
+        "deleted_at",
+        "deleted_by",
+        "recoverable",
+        "idempotency_key"
+      ],
+      "side_effects": {
+        "external_mutation": true,
+        "may_cost_money": false,
+        "authorization": "The user must explicitly intend to delete the project and the authenticated identity must have the system admin role."
+      },
+      "errors": [
+        "AUTH_REQUIRED",
+        "ADMIN_REQUIRED",
+        "DELETE_CONFIRMATION_MISMATCH",
+        "NOT_FOUND",
         "OUTPUT_CONTRACT_FAILED"
       ]
     }

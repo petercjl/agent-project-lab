@@ -26,9 +26,16 @@ export async function init() {
     name text NOT NULL,
     avatar_url text,
     member_id text NOT NULL,
+    system_role text NOT NULL DEFAULT 'member',
     created_at timestamptz NOT NULL DEFAULT now(),
     last_login_at timestamptz NOT NULL DEFAULT now()
   )`);
+  await pool.query(
+    "ALTER TABLE auth_users ADD COLUMN IF NOT EXISTS system_role text NOT NULL DEFAULT 'member'",
+  );
+  await pool.query(
+    "UPDATE auth_users SET system_role='admin' WHERE member_id='supervisor' AND system_role<>'admin'",
+  );
   await pool.query(`CREATE TABLE IF NOT EXISTS auth_sessions (
     token_hash char(64) PRIMARY KEY,
     user_id text NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,

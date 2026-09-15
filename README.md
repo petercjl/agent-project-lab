@@ -6,7 +6,8 @@ Agent 驱动的商品项目管理应用：项目看板 + Markdown Wiki + `procli
 
 ## 已实现
 
-- 商品生命周期模板建项目，七阶段看板，任务增改、负责人、审核人、截止日期、优先级、验收标准。
+- 商品项目可用默认生命周期或 Agent 提供的自定义 SOP 初始化；店铺项目和企业项目标记为 TODO。
+- 项目名称唯一校验；管理员精确确认后软删除，普通员工可见删除入口但只能联系管理员。
 - 可编辑任务依赖、循环检测、前置完成门槛、提交审核、通过、退回、阻塞与恢复。
 - Wiki 编辑与预览、关键词全文检索、正文历史版本；附件上传下载及 SHA-256 校验。
 - Agent 运行登记、输入输出与质量记录；项目活动审计；审核与下游交接的本地通知。
@@ -70,11 +71,19 @@ procli profile use local
 procli --profile nas doctor --json
 ```
 
-首个正式能力是按商品全生命周期模板创建项目。先预览；NAS 生产写入需明确增加 `--yes`：
+商品项目默认按全生命周期模板创建，也可由 Agent 提交自定义 SOP。每个自定义节点必须同时提供 `name` 和 `description`。先预览；NAS 生产写入需明确增加 `--yes`：
 
 ```bash
 procli project create --name '商品项目' --goal '明确目标' --dry-run --json
 procli project create --name '商品项目' --goal '明确目标' --idempotency-key '<UUID>' --yes --json
+```
+
+自定义 SOP 与管理员软删除：
+
+```bash
+procli project create --name '验证项目' --sop-file ./sop.json --dry-run --json
+procli project delete --name '验证项目' --confirm-name '验证项目' --dry-run --json
+procli project delete --name '验证项目' --confirm-name '验证项目' --yes --json
 ```
 
 创建成功只有在服务端回读的项目、任务数和 Wiki 数与写入响应一致时才会返回。Agent 可通过 npm 包内唯一可信源安装配套 Skill：

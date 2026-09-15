@@ -91,7 +91,7 @@ async function sessionIdentity(req: Request) {
   const token = cookies(req)[sessionCookie];
   if (!token) return null;
   const result = await pool.query(
-    `SELECT u.id,u.name,u.avatar_url AS "avatarUrl",u.member_id AS "memberId",
+    `SELECT u.id,u.name,u.avatar_url AS "avatarUrl",u.member_id AS "memberId",u.system_role AS "systemRole",
             u.union_id AS "unionId",u.open_id AS "openId",u.corp_id AS "corpId",
             s.expires_at AS "expiresAt"
        FROM auth_sessions s JOIN auth_users u ON u.id=s.user_id
@@ -109,7 +109,7 @@ async function sessionIdentity(req: Request) {
 async function apiTokenIdentity(raw: string) {
   if (!raw) return null;
   const result = await pool.query(
-    `SELECT u.id,u.name,u.avatar_url AS "avatarUrl",u.member_id AS "memberId",
+    `SELECT u.id,u.name,u.avatar_url AS "avatarUrl",u.member_id AS "memberId",u.system_role AS "systemRole",
             u.union_id AS "unionId",u.open_id AS "openId",u.corp_id AS "corpId",
             t.expires_at AS "expiresAt",t.client_name AS "clientName"
        FROM api_tokens t JOIN auth_users u ON u.id=t.user_id
@@ -158,11 +158,12 @@ async function provisionUser(token: any, profile: any) {
   const rawAvatarUrl = String(profile.avatarUrl || "").slice(0, 1000);
   const avatarUrl = /^https:\/\//.test(rawAvatarUrl) ? rawAvatarUrl : "";
   const found = await pool.query(
-    'SELECT id,member_id AS "memberId" FROM auth_users WHERE union_id=$1',
+    'SELECT id,member_id AS "memberId",system_role AS "systemRole" FROM auth_users WHERE union_id=$1',
     [identityKey],
   );
   let id = found.rows[0]?.id as string | undefined;
   let memberId = found.rows[0]?.memberId as string | undefined;
+  let systemRole = found.rows[0]?.systemRole as string | undefined;
   if (!id) {
     const count = Number(
       (await pool.query("SELECT count(*) FROM auth_users")).rows[0].count,
@@ -171,6 +172,7 @@ async function provisionUser(token: any, profile: any) {
       cfg.adminUnionId === identityKey ||
       (count === 0 && cfg.bootstrapFirstAdmin);
     memberId = isAdmin ? "supervisor" : `dt_${hash(identityKey).slice(0, 20)}`;
+    systemRole = isAdmin ? "admin" : "member";
     await change(
       memberId,
       "",
@@ -194,8 +196,8 @@ async function provisionUser(token: any, profile: any) {
     );
     id = uid();
     await pool.query(
-      `INSERT INTO auth_users(id,union_id,open_id,corp_id,name,avatar_url,member_id)
-       VALUES($1,$2,$3,$4,$5,$6,$7)`,
+      `INSERT INTO auth_users(id,union_id,open_id,corp_id,name,avatar_url,member_id,system_role)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
       [
         id,
         identityKey,
@@ -204,9 +206,12 @@ async function provisionUser(token: any, profile: any) {
         name,
         avatarUrl || null,
         memberId,
+        systemRole,
       ],
     );
   } else {
+    if (cfg.adminUnionId === identityKey || memberId === "supervisor")
+      systemRole = "admin";
     await change(memberId!, "", `auth.refresh.${identityKey}`, (state: any) => {
       const member = state.members.find((item: any) => item.id === memberId);
       if (member) {
@@ -216,12 +221,19 @@ async function provisionUser(token: any, profile: any) {
       }
     });
     await pool.query(
-      `UPDATE auth_users SET open_id=$2,corp_id=$3,name=$4,avatar_url=$5,last_login_at=now()
+      `UPDATE auth_users SET open_id=$2,corp_id=$3,name=$4,avatar_url=$5,system_role=$6,last_login_at=now()
         WHERE id=$1`,
-      [id, openId || null, corpId || null, name, avatarUrl || null],
+      [
+        id,
+        openId || null,
+        corpId || null,
+        name,
+        avatarUrl || null,
+        systemRole || "member",
+      ],
     );
   }
-  return { id, memberId, name, avatarUrl, unionId, openId, corpId };
+  return { id, memberId, name, avatarUrl, unionId, openId, corpId, systemRole };
 }
 
 async function createSession(userId: string) {
@@ -253,6 +265,8 @@ export function installAuth(app: Express) {
             mode: cfg.mode,
             memberId: member.id,
             name: member.name,
+            systemRole: member.id === "supervisor" ? "admin" : "member",
+            isAdmin: member.id === "supervisor",
           },
         });
       }
@@ -267,6 +281,8 @@ export function installAuth(app: Express) {
               memberId: identity.memberId,
               name: identity.name,
               avatarUrl: identity.avatarUrl,
+              systemRole: identity.systemRole,
+              isAdmin: identity.systemRole === "admin",
               expiresAt: identity.expiresAt,
             }
           : {
@@ -448,8 +464,16 @@ export function installAuth(app: Express) {
         );
       }
       if (found.rows[0].status === "approved")
-        return res.type("html").send("<!doctype html><meta charset=utf-8><title>procli 已授权</title><h1>procli 已授权</h1><p>可以返回终端继续使用。</p>");
-      res.type("html").send(`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>授权 procli</title><style>body{font-family:system-ui;max-width:520px;margin:12vh auto;padding:24px;color:#172033}button{padding:12px 24px;background:#2563eb;color:white;border:0;border-radius:8px;font-size:16px}</style><h1>授权 procli</h1><p>当前钉钉身份：${String(identity.name).replace(/[<>&"]/g, "")}</p><p>授权后，procli 将以你的项目成员身份操作所选环境。</p><form method="post"><input type="hidden" name="request" value="${requestId}"><button type="submit">确认授权</button></form></html>`);
+        return res
+          .type("html")
+          .send(
+            "<!doctype html><meta charset=utf-8><title>procli 已授权</title><h1>procli 已授权</h1><p>可以返回终端继续使用。</p>",
+          );
+      res
+        .type("html")
+        .send(
+          `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>授权 procli</title><style>body{font-family:system-ui;max-width:520px;margin:12vh auto;padding:24px;color:#172033}button{padding:12px 24px;background:#2563eb;color:white;border:0;border-radius:8px;font-size:16px}</style><h1>授权 procli</h1><p>当前钉钉身份：${String(identity.name).replace(/[<>&"]/g, "")}</p><p>授权后，procli 将以你的项目成员身份操作所选环境。</p><form method="post"><input type="hidden" name="request" value="${requestId}"><button type="submit">确认授权</button></form></html>`,
+        );
     } catch (error) {
       next(error);
     }
@@ -459,7 +483,8 @@ export function installAuth(app: Express) {
     try {
       const requestId = String(req.body.request || "");
       const identity = await sessionIdentity(req);
-      if (!identity) throw new Fault("AUTH_REQUIRED", "请先使用钉钉账号登录", 401);
+      if (!identity)
+        throw new Fault("AUTH_REQUIRED", "请先使用钉钉账号登录", 401);
       const result = await pool.query(
         `UPDATE cli_auth_requests SET user_id=$2,status='approved'
           WHERE request_id=$1 AND status='pending' AND expires_at>now()
@@ -468,7 +493,11 @@ export function installAuth(app: Express) {
       );
       if (!result.rowCount)
         throw new Fault("AUTH_REQUEST_EXPIRED", "CLI 授权请求已失效", 410);
-      res.type("html").send("<!doctype html><meta charset=utf-8><title>procli 授权成功</title><h1>授权成功</h1><p>可以关闭此页面并返回终端。</p>");
+      res
+        .type("html")
+        .send(
+          "<!doctype html><meta charset=utf-8><title>procli 授权成功</title><h1>授权成功</h1><p>可以关闭此页面并返回终端。</p>",
+        );
     } catch (error) {
       next(error);
     }
@@ -496,7 +525,7 @@ export function installAuth(app: Express) {
       const raw = `pro_${randomBytes(36).toString("base64url")}`;
       const expiresAt = new Date(Date.now() + 90 * 86400 * 1000);
       const user = await client.query(
-        `SELECT name,member_id AS "memberId" FROM auth_users WHERE id=$1`,
+        `SELECT name,member_id AS "memberId",system_role AS "systemRole" FROM auth_users WHERE id=$1`,
         [found.rows[0].user_id],
       );
       if (!user.rowCount)
@@ -504,7 +533,12 @@ export function installAuth(app: Express) {
       await client.query(
         `INSERT INTO api_tokens(token_hash,user_id,client_name,expires_at)
          VALUES($1,$2,$3,$4)`,
-        [hash(raw), found.rows[0].user_id, found.rows[0].client_name, expiresAt],
+        [
+          hash(raw),
+          found.rows[0].user_id,
+          found.rows[0].client_name,
+          expiresAt,
+        ],
       );
       await client.query("DELETE FROM cli_auth_requests WHERE request_id=$1", [
         requestId,
@@ -518,6 +552,8 @@ export function installAuth(app: Express) {
           member: {
             id: user.rows[0].memberId,
             name: user.rows[0].name,
+            systemRole: user.rows[0].systemRole,
+            isAdmin: user.rows[0].systemRole === "admin",
           },
         },
       });
@@ -532,12 +568,18 @@ export function installAuth(app: Express) {
   app.get("/api/auth/cli/status", async (req, res, next) => {
     try {
       const identity = await apiTokenIdentity(bearerToken(req));
-      if (!identity) throw new Fault("AUTH_REQUIRED", "procli 尚未登录或凭证已失效", 401);
+      if (!identity)
+        throw new Fault("AUTH_REQUIRED", "procli 尚未登录或凭证已失效", 401);
       res.json({
         ok: true,
         data: {
           authenticated: true,
-          member: { id: identity.memberId, name: identity.name },
+          member: {
+            id: identity.memberId,
+            name: identity.name,
+            systemRole: identity.systemRole,
+            isAdmin: identity.systemRole === "admin",
+          },
           clientName: identity.clientName,
           expiresAt: identity.expiresAt,
         },
@@ -551,10 +593,12 @@ export function installAuth(app: Express) {
     try {
       const raw = bearerToken(req);
       const identity = await apiTokenIdentity(raw);
-      if (!identity) throw new Fault("AUTH_REQUIRED", "procli 尚未登录或凭证已失效", 401);
-      await pool.query("UPDATE api_tokens SET revoked_at=now() WHERE token_hash=$1", [
-        hash(raw),
-      ]);
+      if (!identity)
+        throw new Fault("AUTH_REQUIRED", "procli 尚未登录或凭证已失效", 401);
+      await pool.query(
+        "UPDATE api_tokens SET revoked_at=now() WHERE token_hash=$1",
+        [hash(raw)],
+      );
       res.json({ ok: true, data: { revoked: true } });
     } catch (error) {
       next(error);
@@ -574,6 +618,10 @@ export function installAuth(app: Express) {
         req.auth = {
           kind: "development",
           memberId: String(req.headers["x-actor"] || "supervisor"),
+          systemRole:
+            String(req.headers["x-actor"] || "supervisor") === "supervisor"
+              ? "admin"
+              : "member",
         };
         return next();
       }

@@ -8,7 +8,7 @@
       "implementation": {
         "kind": "stable-cli",
         "discovery": "Resolve procli from PATH and verify it with procli version and procli capabilities --json.",
-        "execution": "Run procli project create with the selected Profile, one idempotency key, preview and required confirmation.",
+        "execution": "Run procli project create with the selected Profile, optional custom SOP file, one idempotency key, preview and required confirmation.",
         "normalization": "Use the procli JSON envelope without reinterpretation."
       },
       "features": [
@@ -21,10 +21,44 @@
         "structured_json"
       ],
       "status": "tested",
-      "permissions": ["Network access to the selected service", "Permission to create a project"],
+      "permissions": [
+        "Network access to the selected service",
+        "Permission to create a project"
+      ],
       "normalization": "Use the procli JSON envelope without reinterpretation.",
       "tested_date": "2026-09-15",
-      "evidence": ["Codex resolved the installed procli 0.1.0 entry point, verified authenticated DingTalk identities for local development and NAS production Profiles, confirmed an unacknowledged production write was rejected, then created one project in each environment and received matching write-after-readback counts for seven tasks and eight Wiki paths."]
+      "evidence": [
+        "Codex resolved procli 0.2.0, verified the authenticated local Profile, created a two-node custom-SOP product project, and received matching project, task, dependency, and Wiki write-after-readback results."
+      ]
+    },
+    {
+      "capability_id": "project.service.project.delete",
+      "implementation": {
+        "kind": "stable-cli",
+        "discovery": "Resolve procli from PATH and verify it with procli version and procli capabilities --json.",
+        "execution": "Run procli project delete with the selected Profile, exact-name confirmation, one idempotency key, preview, explicit --yes, and administrator authorization.",
+        "normalization": "Use the procli JSON envelope without reinterpretation."
+      },
+      "features": [
+        "profile_selection",
+        "target_identity_verification",
+        "dry_run",
+        "admin_authorization",
+        "exact_name_confirmation",
+        "idempotent_write",
+        "post_write_readback",
+        "structured_json"
+      ],
+      "status": "tested",
+      "permissions": [
+        "Network access to the selected service",
+        "System administrator permission to delete a project"
+      ],
+      "normalization": "Use the procli JSON envelope without reinterpretation.",
+      "tested_date": "2026-09-15",
+      "evidence": [
+        "Codex previewed the two-node local test project, deleted it as the authenticated system administrator with exact-name confirmation, and received soft-delete-readback with the project id, actor, timestamp, counts, and recoverable=true."
+      ]
     }
   ]
 }
