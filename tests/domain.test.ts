@@ -5,6 +5,8 @@ import {
   makeProject,
   transition,
   setDependencies,
+  promoteTaskContent,
+  taskContentStatus,
 } from "../domain.ts";
 function fixture() {
   const s: any = initial();
@@ -26,6 +28,26 @@ test("SOP generates seven sequential tasks", () => {
   const s = fixture();
   assert.equal(s.tasks.length, 7);
   assert.deepEqual(s.tasks[1].dependencies, [s.tasks[0].id]);
+});
+test("task content status ignores metadata and advances monotonically", () => {
+  const s = fixture();
+  const task = s.tasks[0];
+  task.priority = "高";
+  task.dueDate = "2026-10-01";
+  assert.equal(taskContentStatus(s, task), "empty");
+  s.runs.push({ id: "run", projectId: task.projectId, taskId: task.id });
+  assert.equal(taskContentStatus(s, task), "executed");
+  promoteTaskContent(task, "executed");
+  s.pages.push({
+    projectId: task.projectId,
+    path: task.wikiPath,
+    substantive: true,
+  });
+  assert.equal(taskContentStatus(s, task), "substantive");
+  promoteTaskContent(task, "substantive");
+  s.runs = [];
+  s.pages = [];
+  assert.equal(taskContentStatus(s, task), "substantive");
 });
 test("custom SOP requires complete nodes and replaces the default SOP", () => {
   const s: any = initial();

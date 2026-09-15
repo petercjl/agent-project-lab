@@ -5,7 +5,9 @@ import DOMPurify from "dompurify";
 import "./style.css";
 function savedCollapsedGroups() {
   try {
-    const value = JSON.parse(localStorage.getItem("collapsed-project-groups") || "[]");
+    const value = JSON.parse(
+      localStorage.getItem("collapsed-project-groups") || "[]",
+    );
     return Array.isArray(value)
       ? value.filter((item): item is string => typeof item === "string")
       : [];
@@ -194,18 +196,20 @@ function App() {
     { id: "__pinned__", name: "置顶", pinned: true },
     { id: "", name: "未归档" },
     ...folders.map((folder: any) => ({ id: folder.id, name: folder.name })),
-  ].map((folder: any) => ({
-    ...folder,
-    projects: sortedProjects.filter((project: any) =>
-      folder.pinned
-        ? project.pinned
-        : project.pinned
-          ? false
-          : folder.id
-            ? project.folderId === folder.id
-            : !project.folderId || !folderIds.has(project.folderId),
-    ),
-  })).filter((folder: any) => !folder.pinned || folder.projects.length > 0);
+  ]
+    .map((folder: any) => ({
+      ...folder,
+      projects: sortedProjects.filter((project: any) =>
+        folder.pinned
+          ? project.pinned
+          : project.pinned
+            ? false
+            : folder.id
+              ? project.folderId === folder.id
+              : !project.folderId || !folderIds.has(project.folderId),
+      ),
+    }))
+    .filter((folder: any) => !folder.pinned || folder.projects.length > 0);
   const projectProgress = (projectId: string) => {
     const items =
       s?.tasks.filter((item: any) => item.projectId === projectId) || [];
@@ -300,6 +304,57 @@ function App() {
       FOLDER_OPEN(false);
     });
   }
+  async function createStage() {
+    const name = prompt("新节点名称，例如：渠道测试");
+    if (!name?.trim()) return;
+    await act(() =>
+      api(
+        `/projects/${pid}/nodes`,
+        "POST",
+        { name: name.trim() },
+        { "idempotency-key": crypto.randomUUID() },
+      ),
+    );
+  }
+  async function deleteStage(stage: string) {
+    const stageTasks = tasks.filter((item: any) => item.stage === stage);
+    const blocked = stageTasks.filter(
+      (item: any) => item.contentStatus !== "empty",
+    );
+    if (blocked.length) {
+      alert(
+        `节点“${stage}”包含已有 Agent 执行记录或实质产出的任务，不能删除：${blocked
+          .map((item: any) => item.title)
+          .join("、")}`,
+      );
+      return;
+    }
+    const detail = stageTasks.length
+      ? `并删除其中 ${stageTasks.length} 个空任务`
+      : "";
+    if (!confirm(`确认删除节点“${stage}”${detail}？`)) return;
+    await act(() =>
+      api(
+        `/projects/${pid}/nodes/${encodeURIComponent(stage)}`,
+        "DELETE",
+        undefined,
+        { "idempotency-key": crypto.randomUUID() },
+      ),
+    );
+  }
+  async function deleteTask(taskToDelete: any) {
+    if (taskToDelete.contentStatus !== "empty") {
+      alert("该任务已有 Agent 执行记录或实质产出，不能删除。");
+      return;
+    }
+    if (!confirm(`确认删除空任务“${taskToDelete.title}”？`)) return;
+    await act(async () => {
+      await api(`/tasks/${taskToDelete.id}`, "DELETE", undefined, {
+        "idempotency-key": crypto.randomUUID(),
+      });
+      D(null);
+    });
+  }
   async function moveProject(project: any, folderId: string) {
     await act(() =>
       api(
@@ -360,7 +415,9 @@ function App() {
   async function dropFolder(draggedId: string, targetId: string) {
     if (draggedId === targetId) return;
     const nextFolders = [...folders];
-    const from = nextFolders.findIndex((folder: any) => folder.id === draggedId);
+    const from = nextFolders.findIndex(
+      (folder: any) => folder.id === draggedId,
+    );
     const to = nextFolders.findIndex((folder: any) => folder.id === targetId);
     if (from < 0 || to < 0) return;
     const [dragged] = nextFolders.splice(from, 1);
@@ -395,7 +452,11 @@ function App() {
           (project: any) => project.id === beforeProjectId,
         )
       : -1;
-    target.projects.splice(before >= 0 ? before : target.projects.length, 0, dragged);
+    target.projects.splice(
+      before >= 0 ? before : target.projects.length,
+      0,
+      dragged,
+    );
     await saveDirectoryOrder(folders, nextGroups);
   }
   function selectProject(project: any) {
@@ -414,7 +475,10 @@ function App() {
     const estimatedHeight = Math.min(360, 150 + (folders.length + 1) * 34);
     CONTEXT_MENU({
       project,
-      x: Math.max(8, Math.min(point.clientX, window.innerWidth - menuWidth - 8)),
+      x: Math.max(
+        8,
+        Math.min(point.clientX, window.innerWidth - menuWidth - 8),
+      ),
       y: Math.max(
         8,
         Math.min(point.clientY, window.innerHeight - estimatedHeight - 8),
@@ -565,106 +629,112 @@ function App() {
               const groupCollapsed = collapsedGroups.includes(groupKey);
               return (
                 <section className="project-group" key={groupKey}>
-              <div
-                className="folder-title"
-                draggable={Boolean(group.id && !group.pinned)}
-                onDragStart={(event) => {
-                  event.dataTransfer.effectAllowed = "move";
-                  event.dataTransfer.setData(
-                    "application/x-project-directory",
-                    JSON.stringify({ type: "folder", id: group.id }),
-                  );
-                  event.dataTransfer.setData(
-                    "text/plain",
-                    JSON.stringify({ type: "folder", id: group.id }),
-                  );
-                }}
-                onDragOver={(event) => event.preventDefault()}
-                onDrop={(event) => {
-                  event.preventDefault();
-                  const dragged = dragItem(event);
-                  if (dragged?.type === "folder" && group.id && !group.pinned)
-                    dropFolder(dragged.id, group.id);
-                  if (dragged?.type === "project")
-                    dropProject(dragged.id, group.id);
-                }}
-              >
-                <button
-                  aria-expanded={!groupCollapsed}
-                  aria-label={`${groupCollapsed ? "展开" : "收起"}目录 ${group.name}`}
-                  onClick={() => toggleProjectGroup(groupKey)}
-                >
-                  <span>
-                    {groupCollapsed ? "▸" : "▾"} {group.pinned ? "⌖" : "□"}{" "}
-                    {group.name}
-                  </span>
-                  <small>{group.projects.length}</small>
-                </button>
-              </div>
-              {!groupCollapsed && group.projects.map((x: any) => (
-                <div
-                  className={`project-row ${pid === x.id ? "selected" : ""}`}
-                  key={x.id}
-                  tabIndex={0}
-                  draggable
-                  onDragStart={(event) => {
-                    event.dataTransfer.effectAllowed = "move";
-                    event.dataTransfer.setData(
-                      "application/x-project-directory",
-                      JSON.stringify({ type: "project", id: x.id }),
-                    );
-                    event.dataTransfer.setData(
-                      "text/plain",
-                      JSON.stringify({ type: "project", id: x.id }),
-                    );
-                  }}
-                  onDragOver={(event) => event.preventDefault()}
-                  onDrop={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    const dragged = dragItem(event);
-                    if (dragged?.type === "project")
-                      dropProject(dragged.id, group.id, x.id);
-                  }}
-                  onContextMenu={(event) => {
-                    event.preventDefault();
-                    openProjectMenu(x, event);
-                  }}
-                  onKeyDown={(event) => {
-                    if (
-                      event.key !== "ContextMenu" &&
-                      !(event.shiftKey && event.key === "F10")
-                    )
-                      return;
-                    event.preventDefault();
-                    const box = event.currentTarget.getBoundingClientRect();
-                    openProjectMenu(x, {
-                      clientX: box.left + Math.min(box.width, 180),
-                      clientY: box.top + box.height,
-                    });
-                  }}
-                >
-                  <button
-                    className="project-select"
-                    draggable
+                  <div
+                    className="folder-title"
+                    draggable={Boolean(group.id && !group.pinned)}
                     onDragStart={(event) => {
                       event.dataTransfer.effectAllowed = "move";
                       event.dataTransfer.setData(
                         "application/x-project-directory",
-                        JSON.stringify({ type: "project", id: x.id }),
+                        JSON.stringify({ type: "folder", id: group.id }),
                       );
                       event.dataTransfer.setData(
                         "text/plain",
-                        JSON.stringify({ type: "project", id: x.id }),
+                        JSON.stringify({ type: "folder", id: group.id }),
                       );
                     }}
-                    onClick={() => selectProject(x)}
+                    onDragOver={(event) => event.preventDefault()}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      const dragged = dragItem(event);
+                      if (
+                        dragged?.type === "folder" &&
+                        group.id &&
+                        !group.pinned
+                      )
+                        dropFolder(dragged.id, group.id);
+                      if (dragged?.type === "project")
+                        dropProject(dragged.id, group.id);
+                    }}
                   >
-                    ▣ <span>{x.name}</span>
-                  </button>
-                </div>
-              ))}
-            </section>
+                    <button
+                      aria-expanded={!groupCollapsed}
+                      aria-label={`${groupCollapsed ? "展开" : "收起"}目录 ${group.name}`}
+                      onClick={() => toggleProjectGroup(groupKey)}
+                    >
+                      <span>
+                        {groupCollapsed ? "▸" : "▾"} {group.pinned ? "⌖" : "□"}{" "}
+                        {group.name}
+                      </span>
+                      <small>{group.projects.length}</small>
+                    </button>
+                  </div>
+                  {!groupCollapsed &&
+                    group.projects.map((x: any) => (
+                      <div
+                        className={`project-row ${pid === x.id ? "selected" : ""}`}
+                        key={x.id}
+                        tabIndex={0}
+                        draggable
+                        onDragStart={(event) => {
+                          event.dataTransfer.effectAllowed = "move";
+                          event.dataTransfer.setData(
+                            "application/x-project-directory",
+                            JSON.stringify({ type: "project", id: x.id }),
+                          );
+                          event.dataTransfer.setData(
+                            "text/plain",
+                            JSON.stringify({ type: "project", id: x.id }),
+                          );
+                        }}
+                        onDragOver={(event) => event.preventDefault()}
+                        onDrop={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          const dragged = dragItem(event);
+                          if (dragged?.type === "project")
+                            dropProject(dragged.id, group.id, x.id);
+                        }}
+                        onContextMenu={(event) => {
+                          event.preventDefault();
+                          openProjectMenu(x, event);
+                        }}
+                        onKeyDown={(event) => {
+                          if (
+                            event.key !== "ContextMenu" &&
+                            !(event.shiftKey && event.key === "F10")
+                          )
+                            return;
+                          event.preventDefault();
+                          const box =
+                            event.currentTarget.getBoundingClientRect();
+                          openProjectMenu(x, {
+                            clientX: box.left + Math.min(box.width, 180),
+                            clientY: box.top + box.height,
+                          });
+                        }}
+                      >
+                        <button
+                          className="project-select"
+                          draggable
+                          onDragStart={(event) => {
+                            event.dataTransfer.effectAllowed = "move";
+                            event.dataTransfer.setData(
+                              "application/x-project-directory",
+                              JSON.stringify({ type: "project", id: x.id }),
+                            );
+                            event.dataTransfer.setData(
+                              "text/plain",
+                              JSON.stringify({ type: "project", id: x.id }),
+                            );
+                          }}
+                          onClick={() => selectProject(x)}
+                        >
+                          ▣ <span>{x.name}</span>
+                        </button>
+                      </div>
+                    ))}
+                </section>
               );
             })}
           </div>
@@ -709,8 +779,7 @@ function App() {
           tabIndex={sidebarCollapsed ? -1 : 0}
           onPointerDown={resizeSidebar}
           onKeyDown={(event) => {
-            if (event.key !== "ArrowLeft" && event.key !== "ArrowRight")
-              return;
+            if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
             event.preventDefault();
             SIDEBAR_WIDTH((width) =>
               Math.min(
@@ -727,9 +796,7 @@ function App() {
             <span className="breadcrumb">
               {homeOpen ? "工作空间" : "工作空间 / 商品项目"}
             </span>
-            <h1>
-              {homeOpen ? "项目首页" : p?.name || "开始你的第一个项目"}
-            </h1>
+            <h1>{homeOpen ? "项目首页" : p?.name || "开始你的第一个项目"}</h1>
             <p>
               {homeOpen
                 ? `共 ${sortedProjects.length} 个项目，集中查看进度与最新动态。`
@@ -835,7 +902,8 @@ function App() {
                           />
                         ) : (
                           <div className="project-cover-placeholder">
-                            {project.name.trim().slice(0, 1).toUpperCase() || "项"}
+                            {project.name.trim().slice(0, 1).toUpperCase() ||
+                              "项"}
                           </div>
                         )}
                         <label
@@ -862,12 +930,15 @@ function App() {
                         <p>{project.goal || "暂未填写项目目标"}</p>
                         <div className="home-project-times">
                           <span>创建 {local(project.createdAt)}</span>
-                          <span>更新 {local(project.updatedAt || project.createdAt)}</span>
+                          <span>
+                            更新 {local(project.updatedAt || project.createdAt)}
+                          </span>
                         </div>
                         <div className="home-progress-label">
                           <span>项目进度</span>
                           <b>
-                            {progress.percent}% · {progress.completed}/{progress.total}
+                            {progress.percent}% · {progress.completed}/
+                            {progress.total}
                           </b>
                         </div>
                         <progress value={progress.percent} max="100" />
@@ -989,22 +1060,7 @@ function App() {
                       <option key={x}>{x}</option>
                     ))}
                   </select>
-                  <button
-                    onClick={() =>
-                      act(async () => {
-                        const title = prompt("任务名称");
-                        if (title)
-                          await api("/tasks", "POST", {
-                            projectId: pid,
-                            title,
-                            stage: p.stages[0],
-                            owner: actor,
-                          });
-                      })
-                    }
-                  >
-                    ＋ 新任务
-                  </button>
+                  <button onClick={createStage}>＋ 添加节点</button>
                 </div>
                 <section className="board">
                   {p.stages.map((stage: string, i: number) => {
@@ -1031,8 +1087,16 @@ function App() {
                               ][i],
                             }}
                           />
-                          {stage}
-                          <span>{ts.length}</span>
+                          <strong>{stage}</strong>
+                          <span className="column-count">{ts.length}</span>
+                          <button
+                            className="delete-stage"
+                            title="删除节点"
+                            aria-label={`删除节点 ${stage}`}
+                            onClick={() => deleteStage(stage)}
+                          >
+                            ×
+                          </button>
                         </div>
                         {ts.map((t: any) => (
                           <button
@@ -1047,6 +1111,15 @@ function App() {
                               <small>{t.priority}优先级</small>
                             </div>
                             <h3>{t.title}</h3>
+                            <div
+                              className={`content-state content-${t.contentStatus || "empty"}`}
+                            >
+                              {t.contentStatus === "substantive"
+                                ? "● 已有内容"
+                                : t.contentStatus === "executed"
+                                  ? "◐ 已执行"
+                                  : "○ 空任务"}
+                            </div>
                             <div className="card-note">
                               {t.status === "待开始"
                                 ? ready(t)
@@ -1685,6 +1758,15 @@ function App() {
               <button onClick={() => D(null)}>关闭 ×</button>
             </div>
             <span className={"badge status-" + task.status}>{task.status}</span>
+            <span
+              className={`content-state content-${task.contentStatus || "empty"}`}
+            >
+              {task.contentStatus === "substantive"
+                ? "● 已有实质内容"
+                : task.contentStatus === "executed"
+                  ? "◐ Agent 已执行"
+                  : "○ 空任务，可删除"}
+            </span>
             <h2>{task.title}</h2>
             <p className="muted">
               版本 {task.version} · {task.id}
@@ -1881,6 +1963,18 @@ function App() {
             <small className="muted">
               提交审核需有正文交付或附件；审核通过后，系统向下一节点负责人生成消息。
             </small>
+            <button
+              className="danger-outline delete-task"
+              disabled={busy || task.contentStatus !== "empty"}
+              title={
+                task.contentStatus === "empty"
+                  ? "删除这个空任务"
+                  : "已有 Agent 执行记录或实质产出的任务不能删除"
+              }
+              onClick={() => deleteTask(task)}
+            >
+              删除任务
+            </button>
           </section>
         </div>
       )}

@@ -189,3 +189,15 @@ export async function writeFile(
   await fs.writeFile(temp, content, { flag: "wx" });
   await fs.rename(temp, dest);
 }
+
+export async function removeFile(projectId: string, relative: string) {
+  const dest = await safeFile(projectId, relative);
+  const changes = fileChanges.getStore();
+  try {
+    const old = await fs.readFile(dest);
+    if (changes && !changes.has(dest)) changes.set(dest, old);
+    await fs.unlink(dest);
+  } catch (error: any) {
+    if (error.code !== "ENOENT") throw error;
+  }
+}

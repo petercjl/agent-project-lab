@@ -10,6 +10,7 @@ import {
   change,
   audit,
   writeFile,
+  removeFile,
   safeFile,
   root,
 } from "./store.ts";
@@ -24,6 +25,8 @@ import {
   stages,
   statuses,
   projectNameKey,
+  promoteTaskContent,
+  taskContentStatus,
 } from "./domain.ts";
 const app = express();
 app.use(express.json({ limit: "100mb" }));
@@ -63,6 +66,59 @@ const taskNameKey = (value: any) =>
     .normalize("NFKC")
     .replace(/\s+/g, " ")
     .toLocaleLowerCase("zh-CN");
+const stageNameKey = (value: any) =>
+  required(value, "节点名称")
+    .normalize("NFKC")
+    .replace(/\s+/g, " ")
+    .toLocaleLowerCase("zh-CN");
+const taskView = (state: any, task: any) => {
+  const contentStatus = taskContentStatus(state, task);
+  return {
+    ...task,
+    contentStatus,
+    deletable: contentStatus === "empty",
+  };
+};
+async function removeEmptyTasks(state: any, tasks: any[], who: string) {
+  const blocked = tasks.filter(
+    (task: any) => taskContentStatus(state, task) !== "empty",
+  );
+  if (blocked.length)
+    throw new Fault(
+      "TASK_HAS_CONTENT",
+      `已有 Agent 执行记录或实质产出，不能删除：${blocked
+        .map((task: any) => task.title)
+        .join("、")}`,
+      409,
+    );
+  const ids = new Set(tasks.map((task: any) => task.id));
+  const wikiPaths = new Set(tasks.map((task: any) => task.wikiPath));
+  for (const task of tasks) await removeFile(task.projectId, task.wikiPath);
+  state.tasks = state.tasks.filter((task: any) => !ids.has(task.id));
+  state.pages = state.pages.filter(
+    (page: any) =>
+      !tasks.some(
+        (task: any) =>
+          page.projectId === task.projectId && wikiPaths.has(page.path),
+      ),
+  );
+  state.notifications = state.notifications.filter(
+    (notification: any) => !ids.has(notification.taskId),
+  );
+  for (const task of state.tasks) {
+    const next = task.dependencies.filter((id: string) => !ids.has(id));
+    if (next.length !== task.dependencies.length) {
+      task.dependencies = next;
+      task.version++;
+      task.updatedAt = now();
+    }
+  }
+  return tasks.map((task: any) => ({
+    id: task.id,
+    title: task.title,
+    deletedBy: who,
+  }));
+}
 const requireAdmin = (req: any) => {
   if (req.auth?.systemRole !== "admin")
     throw new Fault(
@@ -131,7 +187,9 @@ route("get", "/api/state", async () => {
     projects: state.projects.filter((project: any) =>
       activeIds.has(project.id),
     ),
-    tasks: state.tasks.filter((item: any) => activeIds.has(item.projectId)),
+    tasks: state.tasks
+      .filter((item: any) => activeIds.has(item.projectId))
+      .map((item: any) => taskView(state, item)),
     pages: state.pages.filter((item: any) => activeIds.has(item.projectId)),
     artifacts: state.artifacts.filter((item: any) =>
       activeIds.has(item.projectId),
@@ -163,7 +221,10 @@ route("get", "/api/capabilities", () => ({
     "project.delete",
     "project.export",
     "project.restore",
+    "project.node.create",
+    "project.node.delete-empty",
     "task.create",
+    "task.delete-empty",
     "task.update",
     "task.start",
     "task.submit",
@@ -635,7 +696,7 @@ route("get", "/api/v1/projects/:id/tasks", async (req) => {
     },
     count: tasks.length,
     tasks: tasks.map((task: any) => ({
-      ...task,
+      ...taskView(s, task),
       dependencyStates: task.dependencies.map((id: string) => {
         const dependency = tasks.find((item: any) => item.id === id);
         return dependency
@@ -674,7 +735,7 @@ route("get", "/api/v1/projects/:id/tasks/resolve/by-name", async (req) => {
     .sort((a: any, b: any) => a.createdAt.localeCompare(b.createdAt));
   return {
     project: { id: project.id, name: project.name },
-    task,
+    task: taskView(s, task),
     dependencies: task.dependencies.map((id: string) => {
       const dependency = projectTasks.find((item: any) => item.id === id);
       return dependency
@@ -723,6 +784,44 @@ route("get", "/api/v1/projects/:id/tasks/resolve/by-name", async (req) => {
     },
   };
 });
+route("post", "/api/projects/:id/nodes", (req) =>
+  mutate(req, (s: any, who: string) => {
+    const project = activeProject(s.projects, req.params.id);
+    const name = required(req.body.name, "节点名称");
+    const key = stageNameKey(name);
+    if (project.stages.some((stage: string) => stageNameKey(stage) === key))
+      throw new Fault("STAGE_NAME_CONFLICT", `节点名称已存在：${name}`, 409);
+    if (project.stages.length >= 50)
+      throw new Fault("VALIDATION", "每个项目最多支持 50 个节点");
+    project.stages.push(name);
+    audit(s, who, "node.created", project.id, { name });
+    return { projectId: project.id, name, taskCount: 0 };
+  }),
+);
+route("delete", "/api/projects/:id/nodes/:stage", (req) =>
+  mutate(req, async (s: any, who: string) => {
+    const project = activeProject(s.projects, req.params.id);
+    const key = stageNameKey(req.params.stage);
+    const stage = project.stages.find(
+      (item: string) => stageNameKey(item) === key,
+    );
+    if (!stage) throw new Fault("NOT_FOUND", "节点不存在", 404);
+    const tasks = s.tasks.filter(
+      (task: any) => task.projectId === project.id && task.stage === stage,
+    );
+    const deletedTasks = await removeEmptyTasks(s, tasks, who);
+    project.stages = project.stages.filter((item: string) => item !== stage);
+    audit(s, who, "node.deleted", project.id, {
+      name: stage,
+      deletedTasks,
+    });
+    return {
+      projectId: project.id,
+      name: stage,
+      deletedTaskCount: deletedTasks.length,
+    };
+  }),
+);
 route("post", "/api/tasks", (req) =>
   mutate(req, (s: any, who: string) => {
     const p = activeProject(s.projects, req.body.projectId);
@@ -735,6 +834,7 @@ route("post", "/api/tasks", (req) =>
       title: required(b.title, "任务标题"),
       stage: b.stage,
       status: "待开始",
+      contentStatus: "empty",
       owner: b.owner,
       reviewer: "supervisor",
       priority: "中",
@@ -750,6 +850,15 @@ route("post", "/api/tasks", (req) =>
     s.tasks.push(t);
     audit(s, who, "task.created", p.id, { taskId: t.id, title: t.title });
     return t;
+  }),
+);
+route("delete", "/api/tasks/:id", (req) =>
+  mutate(req, async (s: any, who: string) => {
+    const task = get(s.tasks, req.params.id, "任务");
+    activeProject(s.projects, task.projectId);
+    const [deleted] = await removeEmptyTasks(s, [task], who);
+    audit(s, who, "task.deleted", task.projectId, deleted);
+    return { ...deleted, contentStatus: "empty" };
   }),
 );
 route("patch", "/api/tasks/:id", (req) =>
@@ -866,6 +975,13 @@ route("put", "/api/projects/:id/wiki", (req) =>
     p.updatedAt = now();
     p.updatedBy = who;
     p.runId = req.body.runId || null;
+    if (p.substantive) {
+      const task = s.tasks.find(
+        (item: any) =>
+          item.projectId === req.params.id && item.wikiPath === rel,
+      );
+      if (task) promoteTaskContent(task, "substantive");
+    }
     audit(s, who, "wiki.updated", req.params.id, {
       path: rel,
       version: p.version,
@@ -1004,6 +1120,7 @@ app.post(
           createdAt: now(),
         };
         s.artifacts.push(a);
+        promoteTaskContent(t, "substantive");
         audit(s, who, "artifact.added", t.projectId, a);
         return a;
       });
@@ -1039,6 +1156,7 @@ route("post", "/api/runs", (req) =>
       startedAt: now(),
     };
     s.runs.push(r);
+    promoteTaskContent(t, "executed");
     audit(s, who, "run.started", t.projectId, r);
     return r;
   }),
@@ -1057,6 +1175,10 @@ route("patch", "/api/runs/:id", (req) =>
       quality: req.body.quality || "",
       endedAt: now(),
     });
+    if (String(r.output || "").trim()) {
+      const task = get(s.tasks, r.taskId, "任务");
+      promoteTaskContent(task, "substantive");
+    }
     audit(s, who, "run.finished", r.projectId, r);
     return r;
   }),

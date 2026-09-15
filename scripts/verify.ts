@@ -549,6 +549,99 @@ try {
     stage: custom.project.stages[0],
     owner: "agent",
   });
+  const emptyStage = await ok(
+    `/projects/${custom.project.id}/nodes`,
+    "POST",
+    { name: "空节点" },
+    "agent",
+    `empty-stage-${Date.now()}`,
+  );
+  const emptyTask = await ok("/tasks", "POST", {
+    projectId: custom.project.id,
+    title: "可删除空任务",
+    stage: emptyStage.name,
+    owner: "agent",
+  });
+  const metadataOnly = await ok(`/tasks/${emptyTask.id}`, "PATCH", {
+    version: emptyTask.version,
+    priority: "高",
+    dueDate: "2026-10-01",
+  });
+  assert.equal(metadataOnly.contentStatus || "empty", "empty");
+  assert.equal(
+    (await ok("/state")).tasks.find((item: any) => item.id === emptyTask.id)
+      .deletable,
+    true,
+  );
+  await ok(
+    `/tasks/${emptyTask.id}`,
+    "DELETE",
+    undefined,
+    "agent",
+    `delete-empty-task-${Date.now()}`,
+  );
+  const cascadeTask = await ok("/tasks", "POST", {
+    projectId: custom.project.id,
+    title: "随空节点删除",
+    stage: emptyStage.name,
+    owner: "agent",
+  });
+  const deletedStage = await ok(
+    `/projects/${custom.project.id}/nodes/${encodeURIComponent(emptyStage.name)}`,
+    "DELETE",
+    undefined,
+    "agent",
+    `delete-empty-stage-${Date.now()}`,
+  );
+  assert.equal(deletedStage.deletedTaskCount, 1);
+  assert.equal(
+    (await ok("/state")).tasks.some((item: any) => item.id === cascadeTask.id),
+    false,
+  );
+  const protectedStage = await ok(
+    `/projects/${custom.project.id}/nodes`,
+    "POST",
+    { name: "已有执行节点" },
+    "agent",
+    `protected-stage-${Date.now()}`,
+  );
+  const protectedTask = await ok("/tasks", "POST", {
+    projectId: custom.project.id,
+    title: "已有 Agent 执行",
+    stage: protectedStage.name,
+    owner: "agent",
+  });
+  const protectedRun = await ok("/runs", "POST", {
+    taskId: protectedTask.id,
+    skill: "删除保护验收",
+  });
+  let protectedTaskState = (await ok("/state")).tasks.find(
+    (item: any) => item.id === protectedTask.id,
+  );
+  assert.equal(protectedTaskState.contentStatus, "executed");
+  assert.equal(protectedTaskState.deletable, false);
+  assert.equal(
+    (await api(`/tasks/${protectedTask.id}`, "DELETE")).error.code,
+    "TASK_HAS_CONTENT",
+  );
+  assert.equal(
+    (
+      await api(
+        `/projects/${custom.project.id}/nodes/${encodeURIComponent(protectedStage.name)}`,
+        "DELETE",
+      )
+    ).error.code,
+    "TASK_HAS_CONTENT",
+  );
+  await ok(`/runs/${protectedRun.id}`, "PATCH", {
+    status: "completed",
+    output: "形成实质结论",
+  });
+  protectedTaskState = (await ok("/state")).tasks.find(
+    (item: any) => item.id === protectedTask.id,
+  );
+  assert.equal(protectedTaskState.contentStatus, "substantive");
+  checks += 10;
   assert.equal(
     (
       await api(
@@ -637,11 +730,9 @@ try {
     .getByRole("heading", { name: "项目首页", exact: true })
     .waitFor();
   await pageUI.getByRole("button", { name: "卡片视图" }).waitFor();
-  const homeProject = pageUI
-    .locator(".home-project")
-    .filter({
-      has: pageUI.getByRole("heading", { name: p.name, exact: true }),
-    });
+  const homeProject = pageUI.locator(".home-project").filter({
+    has: pageUI.getByRole("heading", { name: p.name, exact: true }),
+  });
   await homeProject.getByText(/创建/).waitFor();
   await homeProject.getByText(/更新/).waitFor();
   await homeProject.getByText(/项目进度/).waitFor();
@@ -673,6 +764,55 @@ try {
       .count(),
     0,
   );
+  const addStageButton = pageUI.getByRole("button", {
+    name: "添加节点",
+    exact: false,
+  });
+  await addStageButton.waitFor();
+  pageUI.once("dialog", (dialog) => dialog.accept("UI 空节点"));
+  await Promise.all([
+    pageUI.waitForResponse(
+      (response) =>
+        response.url().includes(`/api/projects/${p.id}/nodes`) &&
+        response.request().method() === "POST",
+    ),
+    addStageButton.click(),
+  ]);
+  const uiStage = pageUI.locator(".column").filter({ hasText: "UI 空节点" });
+  await uiStage.waitFor();
+  pageUI.once("dialog", (dialog) => dialog.accept());
+  await Promise.all([
+    pageUI.waitForResponse(
+      (response) =>
+        response.url().includes(encodeURIComponent("UI 空节点")) &&
+        response.request().method() === "DELETE",
+    ),
+    uiStage.getByRole("button", { name: "删除节点 UI 空节点" }).click(),
+  ]);
+  await uiStage.waitFor({ state: "detached" });
+  const emptyTaskCard = pageUI
+    .locator(".card")
+    .filter({ hasText: next.title })
+    .first();
+  await emptyTaskCard.click();
+  await pageUI.getByText("空任务，可删除", { exact: false }).waitFor();
+  assert.equal(
+    await pageUI.getByRole("button", { name: "删除任务" }).isEnabled(),
+    true,
+  );
+  await pageUI.getByRole("button", { name: /关闭/ }).click();
+  const protectedTaskCard = pageUI
+    .locator(".card")
+    .filter({ hasText: t.title })
+    .first();
+  await protectedTaskCard.click();
+  await pageUI.getByText("已有实质内容", { exact: false }).waitFor();
+  assert.equal(
+    await pageUI.getByRole("button", { name: "删除任务" }).isDisabled(),
+    true,
+  );
+  await pageUI.getByRole("button", { name: /关闭/ }).click();
+  checks += 8;
   checks++;
   await projectButton.hover();
   const hoverColors = await projectButton.evaluate((element) => {

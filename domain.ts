@@ -83,6 +83,44 @@ export function projectNameKey(value: any) {
     .toLocaleLowerCase("zh-CN");
 }
 
+const contentRanks: Record<string, number> = {
+  empty: 0,
+  executed: 1,
+  substantive: 2,
+};
+
+export function promoteTaskContent(task: any, status: string) {
+  if (!(status in contentRanks))
+    throw new Fault("VALIDATION", "无效任务内容状态");
+  const current = task.contentStatus || "empty";
+  if ((contentRanks[status] || 0) > (contentRanks[current] || 0))
+    task.contentStatus = status;
+  else task.contentStatus = current;
+  return task.contentStatus;
+}
+
+export function taskContentStatus(state: any, task: any) {
+  let status = task.contentStatus || "empty";
+  const runs = state.runs.filter((run: any) => run.taskId === task.id);
+  if (runs.length && contentRanks[status] < contentRanks.executed)
+    status = "executed";
+  if (
+    state.pages.some(
+      (page: any) =>
+        page.projectId === task.projectId &&
+        page.path === task.wikiPath &&
+        page.substantive,
+    ) ||
+    state.artifacts.some((artifact: any) => artifact.taskId === task.id) ||
+    runs.some(
+      (run: any) =>
+        run.status === "completed" && String(run.output || "").trim(),
+    )
+  )
+    status = "substantive";
+  return status;
+}
+
 function safeWikiName(value: string, index: number) {
   const cleaned = value
     .replace(/[\\/:*?"<>|]/g, "-")
@@ -178,8 +216,10 @@ export function makeProject(s: any, input: any) {
     createdAt: now(),
     updatedAt: now(),
     directoryOrder:
-      Math.max(-1, ...s.projects.map((item: any) => item.directoryOrder ?? -1)) +
-      1,
+      Math.max(
+        -1,
+        ...s.projects.map((item: any) => item.directoryOrder ?? -1),
+      ) + 1,
     template: "product-sop-v1",
     sopMode: sop.mode,
     sopVersion: 1,
@@ -196,6 +236,7 @@ export function makeProject(s: any, input: any) {
       title: node.name,
       stage: node.stage,
       status: "待开始",
+      contentStatus: "empty",
       owner: node.owner,
       reviewer: "supervisor",
       priority: "中",

@@ -94,7 +94,9 @@ aside {
   top: 0;
   bottom: 0;
   z-index: 30;
-  transition: width 160ms ease, padding 160ms ease;
+  transition:
+    width 160ms ease,
+    padding 160ms ease;
 }
 .sidebar-toggle {
   position: absolute;
@@ -448,7 +450,9 @@ main {
   margin-left: var(--sidebar-width, 226px);
   min-width: 0;
   width: calc(100% - var(--sidebar-width, 226px));
-  transition: margin-left 160ms ease, width 160ms ease;
+  transition:
+    margin-left 160ms ease,
+    width 160ms ease;
 }
 .app.sidebar-collapsed aside {
   width: 64px;
@@ -574,7 +578,9 @@ header p {
   background: #fff;
   box-shadow: 0 3px 12px rgb(31 48 71 / 4%);
   cursor: pointer;
-  transition: border-color 140ms ease, box-shadow 140ms ease,
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease,
     transform 140ms ease;
 }
 .home-project:hover,
@@ -620,7 +626,9 @@ header p {
   cursor: pointer;
   font-size: 10px;
   opacity: 0;
-  transition: opacity 120ms ease, background 120ms ease;
+  transition:
+    opacity 120ms ease,
+    background 120ms ease;
 }
 .project-cover:hover .cover-upload,
 .cover-upload:focus-within {
@@ -894,13 +902,35 @@ progress::-webkit-progress-value {
   height: 7px;
   border-radius: 50%;
 }
-.column-title span {
+.column-title strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.column-title .column-count {
   margin-left: auto;
   color: #92a0b2;
   background: #e6ebf1;
   padding: 2px 6px;
   border-radius: 4px;
   font-size: 10px;
+}
+.delete-stage {
+  width: 23px;
+  height: 23px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #98a6b8;
+  font-size: 17px;
+  line-height: 1;
+}
+.delete-stage:hover {
+  border: 0;
+  background: #fdecec;
+  color: #b93d3d;
 }
 .card {
   text-align: left;
@@ -916,6 +946,29 @@ progress::-webkit-progress-value {
   line-height: 1.6;
   margin: 13px 0 11px;
   color: #334660;
+}
+.content-state {
+  display: inline-flex;
+  align-items: center;
+  margin: 0 0 8px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: #f3f5f8;
+  color: #8592a5;
+  font-size: 9px;
+  line-height: 1.3;
+}
+.drawer > .content-state {
+  margin-left: 8px;
+  font-size: 10px;
+}
+.content-executed {
+  background: #fff5df;
+  color: #9a6a16;
+}
+.content-substantive {
+  background: #e9f6ef;
+  color: #3c8160;
 }
 .card-top {
   display: flex;
@@ -1297,6 +1350,20 @@ pre {
   bottom: 0;
   background: white;
   padding: 15px 0;
+}
+.danger-outline {
+  border-color: #efc8c8;
+  background: white;
+  color: #b93d3d;
+}
+.danger-outline:hover:not(:disabled) {
+  border-color: #b93d3d;
+  background: #fff5f5;
+  color: #9f2f2f;
+}
+.delete-task {
+  width: 100%;
+  margin-top: 14px;
 }
 .measure-form {
   display: flex;
