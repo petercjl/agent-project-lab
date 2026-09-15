@@ -28,8 +28,17 @@ services:
       DATA_DIR: /app/data
       HOST: 0.0.0.0
       PORT: 4317
+      AUTH_MODE: ${AUTH_MODE:-dingtalk}
+      DINGTALK_CLIENT_ID: ${DINGTALK_CLIENT_ID:?Set DingTalk Client ID}
+      DINGTALK_CLIENT_SECRET: ${DINGTALK_CLIENT_SECRET:?Set DingTalk Client Secret}
+      DINGTALK_CORP_ID: ${DINGTALK_CORP_ID:?Set DingTalk Corp ID}
+      DINGTALK_REDIRECT_URI: ${DINGTALK_REDIRECT_URI:?Set DingTalk redirect URI}
+      DINGTALK_BOOTSTRAP_FIRST_ADMIN: ${DINGTALK_BOOTSTRAP_FIRST_ADMIN:-false}
+      DINGTALK_ADMIN_UNION_ID: ${DINGTALK_ADMIN_UNION_ID:-}
+      AUTH_SESSION_DAYS: ${AUTH_SESSION_DAYS:-7}
+      AGENT_API_TOKEN: ${AGENT_API_TOKEN:?Set Agent API token}
     ports:
-      - "127.0.0.1:14317:4317"
+      - "${APP_BIND_IP:-127.0.0.1}:14317:4317"
     volumes:
       - project-files:/app/data
     depends_on:
