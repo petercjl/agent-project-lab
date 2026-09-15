@@ -117,7 +117,14 @@ projectctl project restore --file 全新备份文件.json
 docker compose up -d --build
 ```
 
-当前机器没有 Docker，因此容器定义尚未实测。默认只发布宿主回环地址端口；正式开放到局域网之前应增加身份认证、访问权限、HTTPS、备份策略和审计保护。本地角色切换用于验证流程，不是安全认证，不能直接暴露到公网。
+UGREEN NAS 已完成实际部署。日常开发发布：
+
+```bash
+git push origin main
+./scripts/deploy-nas.sh ugreen-nas
+```
+
+脚本由 NAS 使用只读部署密钥从 GitHub 获取 `main`，只接受快进更新，重建应用并等待健康检查。默认只发布宿主回环地址端口；正式开放到局域网之前应增加身份认证、访问权限、HTTPS、备份策略和审计保护。本地角色切换用于验证流程，不是安全认证，不能直接暴露到公网。详细过程见 [NAS 部署说明](deploy/README.md)。
 
 ## 验证
 

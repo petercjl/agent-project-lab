@@ -12,18 +12,15 @@ NAS 使用 `deploy/compose.yaml`：独立 PostgreSQL、独立持久化卷、应�
 
 1. 本地完成 `npm run check`、`npm test` 和 `npm run build`，提交并推送 GitHub。
 2. 用 `git ls-remote origin refs/heads/main` 对照本地提交，确认发布的是已上传的提交。
-3. 将该提交的 `git archive` 传到 NAS 的独立发布目录，例如 `<部署根>/releases/<提交ID>`。目录必须全新，解包前检查其存在性与权限；已有版本保留作为代码恢复点。
-4. 在发布目录以外的 `<部署根>/config/runtime.env` 保存 `POSTGRES_PASSWORD`。采用随机十六进制字符串，避开连接 URL 转义问题；文件权限 600，写前检查存在性。更新代码时保持密码和数据卷不变。
-5. 使用具有 Docker 管理权限的账号运行：
+3. NAS 使用仓库专属、只读部署密钥克隆代码到 `<部署根>/repo`；不在 NAS 保存 GitHub 个人令牌。
+4. 在代码目录以外的 `<部署根>/config/runtime.env` 保存 `POSTGRES_PASSWORD`。采用随机十六进制字符串，避开连接 URL 转义问题；文件权限 600，更新代码时保持密码和数据卷不变。
+5. 首次部署后，日常更新从本地仓库执行：
 
 ```bash
-sudo docker compose --env-file <部署根>/config/runtime.env \
-  -f <部署根>/releases/<提交ID>/deploy/compose.yaml up -d --build
+./scripts/deploy-nas.sh ugreen-nas
 ```
 
-`agent-project-lab` 是固定 Compose 项目名，因此不同发布目录使用同一组持久化卷。首次启动得到空项目库，本地预演数据可按需导出并在 NAS 恢复；代码发布不会自动携带本地数据。
-
-GitHub 的个人访问令牌不应复制到 NAS。可以由已认证的开发机获取并传输已确认的提交归档；将来需要 NAS 自行拉取时，再单独配置只读仓库部署密钥。
+`agent-project-lab` 是固定 Compose 项目名，因此更新代码时使用同一组持久化卷。首次启动得到空项目库，本地预演数据可按需导出并在 NAS 恢复；代码发布不会自动携带本地数据。脚本在 NAS 执行 `fetch` 和 `merge --ff-only`，构建完成后等待健康检查。
 
 ## 访问与验收
 
@@ -55,4 +52,4 @@ projectctl doctor --url http://127.0.0.1:14317
 
 ## 当前实测状态
 
-GitHub 仓库创建与初始代码推送已验证。NAS SSH 和 Docker Compose 可执行文件已确认；当前 SSH 用户访问 Docker daemon 被权限拒绝，免密 sudo 不可用。尚未启动 NAS 容器，也没有改变 NAS 现有服务或数据库。部署定义仍需在获得 Docker 管理权限后进行实测。
+GitHub 私有仓库、NAS 只读部署密钥、代码克隆、镜像构建、独立 PostgreSQL、持久化卷、健康检查、SSH 隧道和项目导出恢复均已验证。NAS 运行目录为 `/volume1/docker/agent-project-lab`，应用仅发布到回环地址 `127.0.0.1:14317`。`peter` 已配置免密 sudo；SSH 只增加了该回环端口的转发许可。现有容器和数据库未被修改。
