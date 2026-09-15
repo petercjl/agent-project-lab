@@ -120,9 +120,6 @@ route("get", "/api/capabilities", () => ({
           ),
           browser: "DingTalk OAuth 2.0 authorization code",
           agent: "personal-cli-token",
-          legacyAgentToken: authConfig().agentToken
-            ? "configured"
-            : "not-configured",
         }
       : {
           mode: "development",

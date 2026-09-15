@@ -13,7 +13,7 @@ NAS 使用 `deploy/compose.yaml`：独立 PostgreSQL、独立持久化卷、应�
 1. 本地完成 `npm run check`、`npm test` 和 `npm run build`，提交并推送 GitHub。
 2. 用 `git ls-remote origin refs/heads/main` 对照本地提交，确认发布的是已上传的提交。
 3. NAS 使用仓库专属、只读部署密钥克隆代码到 `<部署根>/repo`；不在 NAS 保存 GitHub 个人令牌。
-4. 在代码目录以外的 `<部署根>/config/runtime.env` 保存数据库密码、钉钉应用凭证、Corp ID、回调地址和 Agent Token。文件权限必须为 600，更新代码时保持凭证、密码和数据卷不变。员工局域网预演所需配置如下，真实值不进入 Git：
+4. 在代码目录以外的 `<部署根>/config/runtime.env` 保存数据库密码、钉钉应用凭证、Corp ID 和回调地址。文件权限必须为 600，更新代码时保持凭证、密码和数据卷不变。员工局域网预演所需配置如下，真实值不进入 Git：
 
 ```dotenv
 APP_BIND_IP=0.0.0.0
@@ -26,7 +26,6 @@ DINGTALK_CORP_ID=<Corp ID>
 DINGTALK_REDIRECT_URI=http://<NAS局域网地址>:14317/api/auth/dingtalk/callback
 DINGTALK_BOOTSTRAP_FIRST_ADMIN=false
 AUTH_SESSION_DAYS=7
-AGENT_API_TOKEN=<独立高强度令牌>
 ```
 5. 首次部署后，日常更新从本地仓库执行：
 

@@ -22,18 +22,19 @@ const mock = createServer(async (req, res) => {
     const chunks: Buffer[] = [];
     for await (const chunk of req) chunks.push(Buffer.from(chunk));
     const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-    assert.deepEqual(body, {
-      clientId: "test-client",
-      clientSecret: "test-secret",
-      code: "valid-code",
-      grantType: "authorization_code",
-    });
+    assert.equal(body.clientId, "test-client");
+    assert.equal(body.clientSecret, "test-secret");
+    assert.ok(["valid-code", "other-corp-code"].includes(body.code));
+    assert.equal(body.grantType, "authorization_code");
     tokenCalls++;
     res.setHeader("content-type", "application/json");
     res.end(
       JSON.stringify({
         accessToken: "mock-user-token",
-        corpId: "corp-verified",
+        corpId:
+          body.code === "other-corp-code"
+            ? "other-corp"
+            : "corp-verified",
       }),
     );
     return;
@@ -71,7 +72,6 @@ const server = spawn(process.execPath, ["--import", "tsx", "server.ts"], {
     DINGTALK_CORP_ID: "corp-verified",
     DINGTALK_REDIRECT_URI: `http://127.0.0.1:${appPort}/api/auth/dingtalk/callback`,
     DINGTALK_BOOTSTRAP_FIRST_ADMIN: "true",
-    AGENT_API_TOKEN: "test-agent-token",
     DINGTALK_TEST_API_BASE_URL: `http://127.0.0.1:${mockPort}`,
     DINGTALK_TEST_LOGIN_BASE_URL: `http://127.0.0.1:${mockPort}`,
   },
@@ -156,7 +156,7 @@ try {
         },
       })
     ).status,
-    200,
+    401,
   );
   assert.equal(
     (
@@ -254,6 +254,27 @@ try {
       })
     ).status,
     401,
+  );
+  checks += 2;
+
+  const otherCorpStart = await fetch(
+    `${base}/api/auth/dingtalk/start?returnTo=/`,
+    { redirect: "manual" },
+  );
+  const otherCorpAuthorization = new URL(
+    otherCorpStart.headers.get("location")!,
+  );
+  const otherCorpCallback = await fetch(
+    `${base}/api/auth/dingtalk/callback?authCode=other-corp-code&state=${encodeURIComponent(otherCorpAuthorization.searchParams.get("state")!)}`,
+    {
+      headers: { cookie: cookieHeader(otherCorpStart) },
+      redirect: "manual",
+    },
+  );
+  assert.equal(otherCorpCallback.status, 302);
+  assert.match(
+    decodeURIComponent(otherCorpCallback.headers.get("location")!),
+    /请选择本企业账号登录/,
   );
   checks += 2;
 

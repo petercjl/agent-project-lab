@@ -8,7 +8,6 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { constants } from "node:fs";
-import { randomBytes } from "node:crypto";
 import path from "node:path";
 
 const args = Object.fromEntries(
@@ -64,8 +63,6 @@ const replace = (key: string, value: string) => {
 };
 replace("DINGTALK_CLIENT_ID", clientId);
 replace("DINGTALK_CLIENT_SECRET", clientSecret);
-if (!/^AGENT_API_TOKEN=.+$/m.test(content))
-  replace("AGENT_API_TOKEN", randomBytes(36).toString("base64url"));
 
 const stamp = new Date().toISOString().replace(/[:.]/g, "-");
 const backupPath = `${envPath}.backup-${stamp}`;
@@ -89,7 +86,6 @@ console.log(
       configured: [
         "DINGTALK_CLIENT_ID",
         "DINGTALK_CLIENT_SECRET",
-        "AGENT_API_TOKEN",
       ],
       env: envPath,
       backup: backupPath,

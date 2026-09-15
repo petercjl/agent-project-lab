@@ -25,7 +25,6 @@ export function authConfig() {
     corpId: process.env.DINGTALK_CORP_ID || "",
     adminUnionId: process.env.DINGTALK_ADMIN_UNION_ID || "",
     bootstrapFirstAdmin: process.env.DINGTALK_BOOTSTRAP_FIRST_ADMIN === "true",
-    agentToken: process.env.AGENT_API_TOKEN || "",
     sessionDays: Math.min(
       30,
       Math.max(1, Number(process.env.AUTH_SESSION_DAYS || 7)),
@@ -579,13 +578,6 @@ export function installAuth(app: Express) {
         return next();
       }
       const bearer = bearerToken(req);
-      if (bearer && cfg.agentToken && equal(bearer, cfg.agentToken)) {
-        req.auth = {
-          kind: "agent",
-          memberId: String(req.headers["x-actor"] || "agent"),
-        };
-        return next();
-      }
       const cliIdentity = await apiTokenIdentity(bearer);
       if (cliIdentity) {
         req.auth = cliIdentity;

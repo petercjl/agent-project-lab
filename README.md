@@ -13,7 +13,7 @@ Agent 驱动的商品项目管理应用：项目看板 + Markdown Wiki + `procli
 - 人工/Agent 耗时记录及同事项平均耗时对比，人工纠正耗时计入总量。
 - 项目完整 JSON 导出与新副本恢复，含任务、Wiki、附件、历史、运行与审计。
 - npm 分发的 `procli`：Profile 环境路由、钉钉个人授权、结构化 JSON、dry-run、写入幂等与写后回读校验。
-- 企业钉钉 OAuth 登录、Corp ID 企业边界校验、员工身份与项目成员绑定、服务端会话和 Agent 独立令牌。
+- 企业钉钉 OAuth 登录、Corp ID 企业边界校验、员工身份与项目成员绑定、服务端会话和个人 CLI Token。
 - PostgreSQL 持久化；Markdown 与附件以普通文件保存；Docker/NAS 部署定义。
 
 ## 在这台电脑启动
@@ -129,7 +129,7 @@ PostgreSQL 中 `lab_state` 的 JSONB 保存项目状态与文档元数据。页�
 docker compose up -d --build
 ```
 
-UGREEN NAS 已完成实际部署。容器从代码目录外的 `runtime.env` 读取数据库、钉钉 OAuth 和 Agent Token 配置。日常开发发布：
+UGREEN NAS 已完成实际部署。容器从代码目录外的 `runtime.env` 读取数据库与钉钉 OAuth 配置。日常开发发布：
 
 ```bash
 git push origin main
@@ -149,6 +149,6 @@ npm run verify:auth
 npx tsx scripts/verify.ts
 ```
 
-认证验收使用临时数据库和本地模拟钉钉上游，覆盖 OAuth state、换取令牌、员工资料、企业校验、会话、Agent Token 与退出。完整业务验收启动独立 4318 端口服务，使用 `project_lab_verification` 数据库和 `data/verification`；不修改日常 `project_lab` 数据。验收项目保留在独立库中供复查。浏览器截图保存在 `test-results`。
+认证验收使用临时数据库和本地模拟钉钉上游，覆盖 OAuth state、换取令牌、员工资料、企业校验、浏览器会话、个人 CLI Token、撤销与退出。完整业务验收启动独立 4318 端口服务，使用 `project_lab_verification` 数据库和 `data/verification`；不修改日常 `project_lab` 数据。验收项目保留在独立库中供复查。浏览器截图保存在 `test-results`。
 
 实施设计见 [实施方案](docs/实施方案.md)，本次测试结果见 [验收记录](docs/验收记录.md)。
