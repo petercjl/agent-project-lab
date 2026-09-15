@@ -1,4 +1,6 @@
 FROM mcr.microsoft.com/devcontainers/javascript-node:1-22-bookworm
+ARG APP_COMMIT=unknown
+LABEL org.opencontainers.image.revision=$APP_COMMIT
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci

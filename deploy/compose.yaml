@@ -19,8 +19,11 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
+      args:
+        APP_COMMIT: ${APP_COMMIT:-unknown}
     restart: unless-stopped
     environment:
+      APP_COMMIT: ${APP_COMMIT:-unknown}
       DATABASE_URL: postgresql://project_lab:${POSTGRES_PASSWORD}@db:5432/project_lab
       DATA_DIR: /app/data
       HOST: 0.0.0.0

@@ -24,11 +24,13 @@ git -C "$repo" fetch origin main
 git -C "$repo" checkout main
 git -C "$repo" merge --ff-only origin/main
 commit="$(git -C "$repo" rev-parse HEAD)"
+export APP_COMMIT="$commit"
 
 sudo -n docker compose --env-file "$runtime_env" -f "$repo/deploy/compose.yaml" up -d --build
 
 for attempt in $(seq 1 30); do
-  if curl -fsS http://127.0.0.1:14317/api/health >/dev/null; then
+  container_health="$(sudo -n docker inspect agent-project-lab-app-1 --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' 2>/dev/null || true)"
+  if [ "$container_health" = healthy ] && curl -fsS http://127.0.0.1:14317/api/health >/dev/null; then
     printf 'NAS deployment healthy: commit=%s url=http://127.0.0.1:14317\n' "$commit"
     sudo -n docker compose --env-file "$runtime_env" -f "$repo/deploy/compose.yaml" ps
     exit 0

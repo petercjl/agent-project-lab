@@ -72,6 +72,7 @@ route("get", "/api/health", async () => {
   return {
     status: "ready",
     version: "0.1.0",
+    commit: process.env.APP_COMMIT || "development",
     storage: "PostgreSQL + Markdown",
     notifications: "local",
   };

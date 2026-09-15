@@ -20,7 +20,7 @@ NAS 使用 `deploy/compose.yaml`：独立 PostgreSQL、独立持久化卷、应�
 ./scripts/deploy-nas.sh ugreen-nas
 ```
 
-`agent-project-lab` 是固定 Compose 项目名，因此更新代码时使用同一组持久化卷。首次启动得到空项目库，本地预演数据可按需导出并在 NAS 恢复；代码发布不会自动携带本地数据。脚本在 NAS 执行 `fetch` 和 `merge --ff-only`，构建完成后等待健康检查。
+`agent-project-lab` 是固定 Compose 项目名，因此更新代码时使用同一组持久化卷。首次启动得到空项目库，本地预演数据可按需导出并在 NAS 恢复；代码发布不会自动携带本地数据。脚本在 NAS 执行 `fetch` 和 `merge --ff-only`，将 Git 提交 ID 写入镜像标签及健康接口，构建完成后等待容器与 HTTP 健康检查。
 
 ## 访问与验收
 
