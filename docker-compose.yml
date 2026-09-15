@@ -1,0 +1,28 @@
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: project_lab
+      POSTGRES_USER: project_lab
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    ports: ["127.0.0.1:55432:5432"]
+    volumes: ["postgres-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U project_lab"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  app:
+    build: .
+    environment:
+      DATABASE_URL: postgresql://project_lab:${POSTGRES_PASSWORD}@db:5432/project_lab
+      DATA_DIR: /app/data
+      HOST: 0.0.0.0
+    ports: ["127.0.0.1:4317:4317"]
+    volumes: ["project-files:/app/data"]
+    depends_on:
+      db:
+        condition: service_healthy
+volumes:
+  postgres-data:
+  project-files:
