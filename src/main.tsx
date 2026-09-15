@@ -737,16 +737,6 @@ function App() {
             </p>
           </div>
           <div className="identity">
-            {!homeOpen && p && (
-              <button
-                className="danger-ghost"
-                onClick={() => {
-                  startDelete(p);
-                }}
-              >
-                删除项目
-              </button>
-            )}
             {auth.mode === "development" ? (
               <>
                 <small>开发角色模拟</small>

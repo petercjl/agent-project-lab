@@ -568,6 +568,11 @@ try {
     exact: true,
   });
   await projectButton.click();
+  assert.equal(
+    await pageUI.locator(".identity").getByRole("button", { name: "删除项目" }).count(),
+    0,
+  );
+  checks++;
   await projectButton.hover();
   const hoverColors = await projectButton.evaluate((element) => {
     const style = getComputedStyle(element);

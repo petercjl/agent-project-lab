@@ -758,15 +758,6 @@ header p {
 .identity button {
   font-size: 12px;
 }
-.danger-ghost {
-  color: #b44f4f;
-  border-color: #efd1d1;
-}
-.danger-ghost:hover {
-  color: #9f3030;
-  background: #fff3f3;
-  border-color: #e5aaaa;
-}
 nav {
   display: flex;
   gap: 28px;
