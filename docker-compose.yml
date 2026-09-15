@@ -1,6 +1,6 @@
 services:
   db:
-    image: postgres:17
+    image: postgres:17.11-bookworm
     environment:
       POSTGRES_DB: project_lab
       POSTGRES_USER: project_lab

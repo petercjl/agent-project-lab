@@ -111,7 +111,7 @@ projectctl project restore --file 全新备份文件.json
 
 ## NAS / 容器
 
-`Dockerfile` 与 `docker-compose.yml` 提供应用 + PostgreSQL + 持久化卷。需自行设置强 `POSTGRES_PASSWORD`，并处理 URL 中的特殊字符编码。避免与本地服务端口冲突。
+`Dockerfile` 与 `docker-compose.yml` 提供应用 + PostgreSQL + 持久化卷。Node 22 基础镜像来自微软官方容器仓库，以适配当前 NAS 无法直连 Docker Hub 的网络；PostgreSQL 固定使用 NAS 已有的 `17.11-bookworm` 镜像。需自行设置强 `POSTGRES_PASSWORD`，并处理 URL 中的特殊字符编码。避免与本地服务端口冲突。
 
 ```bash
 docker compose up -d --build

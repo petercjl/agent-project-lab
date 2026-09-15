@@ -1,4 +1,4 @@
-FROM node:22-bookworm-slim
+FROM mcr.microsoft.com/devcontainers/javascript-node:1-22-bookworm
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
