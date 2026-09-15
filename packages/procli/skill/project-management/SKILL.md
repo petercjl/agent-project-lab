@@ -1,11 +1,13 @@
 ---
 name: project-management
-description: Create and delete projects in a procli-compatible project management service. Use when a user asks an Agent to initialize a product project with the default or a custom SOP, delete a project, choose local or NAS, or verify the target environment.
+description: Operate projects through procli, including product-project creation with default or custom SOPs, administrator deletion, and local/NAS target selection. Always use when the user explicitly says "procli" or asks to use procli, including requests such as "用 procli 帮我创建一个项目：蘑菇铲".
 ---
 
 # Project Management
 
 Use the bundled `procli` executable as the only execution surface. Load the current `capabilities.json` and the adapter matching the advertised Agent platform before acting. Resolve the live CLI version and capabilities at runtime; do not call service APIs directly.
+
+`procli` is the global explicit trigger word for this Skill. When it appears as the requested project-operation tool, route here even if the user does not mention the Skill name. Infer the operation and structured inputs from the surrounding natural language, then follow the matching main line.
 
 The logical capabilities are `project.service.project.create` and `project.service.project.delete`. If the matching adapter mapping is unresolved or unsupported, return `CAPABILITY_UNAVAILABLE`.
 

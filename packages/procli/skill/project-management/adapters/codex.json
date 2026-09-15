@@ -28,7 +28,8 @@
       "normalization": "Use the procli JSON envelope without reinterpretation.",
       "tested_date": "2026-09-15",
       "evidence": [
-        "Codex resolved procli 0.2.0, verified the authenticated local Profile, created a two-node custom-SOP product project, and received matching project, task, dependency, and Wiki write-after-readback results."
+        "Codex resolved procli 0.2.0, verified the authenticated local Profile, created a two-node custom-SOP product project, and received matching project, task, dependency, and Wiki write-after-readback results.",
+        "A clean-context Codex subagent received only the natural request '用 procli 帮我创建一个项目：蘑菇铲', routed through procli, created the project in the local development Profile, and returned the project id plus seven-task, eight-Wiki, and write-after-readback evidence; an independent database and filesystem audit confirmed the project, files, and CLI activity event."
       ]
     },
     {

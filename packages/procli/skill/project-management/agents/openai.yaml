@@ -1,6 +1,6 @@
 interface:
   display_name: "项目管理"
-  short_description: "让 Agent 安全创建并管理商品项目及项目知识"
-  default_prompt: "Use $project-management to create a new product project in the selected procli profile."
+  short_description: "用 procli 安全创建并管理商品项目及项目知识"
+  default_prompt: "Use procli to create a new product project in the selected profile."
 policy:
   allow_implicit_invocation: true
