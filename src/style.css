@@ -195,6 +195,11 @@ aside {
   color: #e6efff;
   border-color: #3a557a;
 }
+.new-project:hover {
+  background: #39577e;
+  border-color: #58749a;
+  color: #fff;
+}
 .new-folder {
   background: #203450;
   color: #d4e0ef;
