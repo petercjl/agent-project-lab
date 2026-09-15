@@ -179,6 +179,7 @@ export function initial() {
     events: [],
     notifications: [],
     measurements: [],
+    deletionBatches: [],
     idempotency: {},
     members: [
       { id: "supervisor", name: "主管", role: "reviewer" },

@@ -16,7 +16,7 @@ import {
 import { inspectTarget, request } from "./client.mjs";
 import { installSkill, skillSource, skillStatus } from "./skill.mjs";
 
-const VERSION = "0.4.0";
+const VERSION = "0.5.0";
 const help = `procli ${VERSION} — Agent-first project management CLI
 
 Profile（默认 nas）：
@@ -38,6 +38,14 @@ Profile（默认 nas）：
               [--due-date YYYY-MM-DD] [--depends-on TASK_NAME[,TASK_NAME...]]
               [--before-task TASK_NAME | --after-task TASK_NAME]
               [--idempotency-key KEY] [--dry-run] [--yes]
+  task delete-context --project PROJECT_NAME --task TASK_NAME
+  task delete --project PROJECT_NAME --task TASK_NAME
+              --confirm-task TASK_NAME [--dependency-policy block|detach|rewire]
+              [--rewire-to TASK_NAME] [--idempotency-key KEY] [--dry-run] [--yes]
+  trash list [--project PROJECT_NAME]
+  trash get --deletion-id ID
+  task restore --deletion-id ID --confirm-task TASK_NAME
+               [--idempotency-key KEY] [--dry-run] [--yes]
   project create --name NAME [--goal TEXT] [--type product] [--sop-file FILE]
                  [--mode agent] [--idempotency-key KEY] [--dry-run] [--yes]
   project delete --name NAME --confirm-name NAME --yes
@@ -482,6 +490,182 @@ export async function main(argv) {
     const project = await resolveProject(profile, required(options, "project"));
     const context = await taskCreateContext(profile, project);
     return output({ target, ...context });
+  }
+  if (group === "task" && command === "delete-context") {
+    const target = await inspectTarget(profile);
+    const project = await resolveProject(profile, required(options, "project"));
+    const resolved = await request(
+      profile,
+      `/api/v1/projects/${encodeURIComponent(project.id)}/tasks/resolve/by-name?name=${encodeURIComponent(required(options, "task"))}`,
+    );
+    const context = await request(
+      profile,
+      `/api/v1/projects/${encodeURIComponent(project.id)}/tasks/${encodeURIComponent(resolved.data.task.id)}/delete-context`,
+    );
+    return output({ target, ...context.data });
+  }
+  if (group === "task" && command === "delete") {
+    const target = await inspectTarget(profile);
+    const project = await resolveProject(profile, required(options, "project"));
+    const requestedTask = required(options, "task");
+    const resolved = await request(
+      profile,
+      `/api/v1/projects/${encodeURIComponent(project.id)}/tasks/resolve/by-name?name=${encodeURIComponent(requestedTask)}`,
+    );
+    const task = resolved.data.task;
+    const context = await request(
+      profile,
+      `/api/v1/projects/${encodeURIComponent(project.id)}/tasks/${encodeURIComponent(task.id)}/delete-context`,
+    );
+    const dependencyPolicy = options["dependency-policy"] || "block";
+    let replacementTaskId = "";
+    if (dependencyPolicy === "rewire") {
+      const replacement = await request(
+        profile,
+        `/api/v1/projects/${encodeURIComponent(project.id)}/tasks/resolve/by-name?name=${encodeURIComponent(required(options, "rewire-to"))}`,
+      );
+      replacementTaskId = replacement.data.task.id;
+    }
+    const preview = await request(
+      profile,
+      `/api/v1/projects/${encodeURIComponent(project.id)}/tasks/${encodeURIComponent(task.id)}/delete-preview`,
+      {
+        method: "POST",
+        body: {
+          contextToken: context.data.contextToken,
+          dependencyPolicy,
+          replacementTaskId,
+        },
+      },
+    );
+    const idempotencyKey = options["idempotency-key"] || crypto.randomUUID();
+    if (options["dry-run"])
+      return output({ target, idempotencyKey, ...preview.data });
+    const confirmedTask = required(options, "confirm-task");
+    if (confirmedTask !== task.title)
+      throw new CliError(
+        "DELETE_CONFIRMATION_MISMATCH",
+        "--confirm-task 必须与当前任务名称完全一致",
+      );
+    if (!preview.data.canDelete)
+      throw new CliError(
+        "DEPENDENTS_EXIST",
+        "存在下游任务，请明确使用 --dependency-policy detach 或 rewire",
+        { preview: preview.data },
+      );
+    if (target.environment === "production" && !options.yes)
+      throw new CliError(
+        "CONFIRMATION_REQUIRED",
+        "目标是生产环境；确认删除任务后请增加 --yes",
+        { target, preview: preview.data },
+      );
+    const deleted = await request(
+      profile,
+      `/api/v1/projects/${encodeURIComponent(project.id)}/tasks/${encodeURIComponent(task.id)}`,
+      {
+        method: "DELETE",
+        body: {
+          contextToken: context.data.contextToken,
+          impactHash: preview.data.impactHash,
+          confirmTask: confirmedTask,
+          dependencyPolicy,
+          replacementTaskId,
+        },
+        idempotencyKey,
+      },
+    );
+    const readback = await request(
+      profile,
+      `/api/v1/trash/${encodeURIComponent(deleted.data.deletionId)}`,
+    );
+    if (
+      readback.data.id !== deleted.data.deletionId ||
+      readback.data.state !== "completed"
+    )
+      throw new CliError(
+        "OUTPUT_CONTRACT_FAILED",
+        "删除后的回收记录与请求不一致",
+        { deletionId: deleted.data.deletionId },
+      );
+    return output({
+      target,
+      idempotencyKey,
+      ...deleted.data,
+      verification: "delete-after-readback",
+    });
+  }
+  if (group === "trash" && command === "list") {
+    const target = await inspectTarget(profile);
+    let query = "";
+    if (options.project) {
+      const project = await resolveProject(profile, options.project);
+      query = `?projectId=${encodeURIComponent(project.id)}`;
+    }
+    const result = await request(profile, `/api/v1/trash${query}`);
+    return output({ target, count: result.data.length, items: result.data });
+  }
+  if (group === "trash" && command === "get") {
+    const target = await inspectTarget(profile);
+    const result = await request(
+      profile,
+      `/api/v1/trash/${encodeURIComponent(required(options, "deletion-id"))}`,
+    );
+    return output({ target, ...result.data });
+  }
+  if (group === "task" && command === "restore") {
+    const target = await inspectTarget(profile);
+    const deletionId = required(options, "deletion-id");
+    const batch = await request(
+      profile,
+      `/api/v1/trash/${encodeURIComponent(deletionId)}`,
+    );
+    const preview = await request(
+      profile,
+      `/api/v1/trash/${encodeURIComponent(deletionId)}/restore-preview`,
+      { method: "POST", body: {} },
+    );
+    const idempotencyKey = options["idempotency-key"] || crypto.randomUUID();
+    if (options["dry-run"])
+      return output({ target, idempotencyKey, ...preview.data });
+    const confirmedTask = required(options, "confirm-task");
+    if (confirmedTask !== batch.data.taskTitle)
+      throw new CliError(
+        "RESTORE_CONFIRMATION_MISMATCH",
+        "--confirm-task 必须与回收记录中的任务名称完全一致",
+      );
+    if (!preview.data.canRestore)
+      throw new CliError("RESTORE_CONFLICT", "当前任务存在恢复冲突", {
+        preview: preview.data,
+      });
+    if (target.environment === "production" && !options.yes)
+      throw new CliError(
+        "CONFIRMATION_REQUIRED",
+        "目标是生产环境；确认恢复任务后请增加 --yes",
+        { target, preview: preview.data },
+      );
+    const restored = await request(
+      profile,
+      `/api/v1/trash/${encodeURIComponent(deletionId)}/restore`,
+      {
+        method: "POST",
+        body: { confirmTask: confirmedTask },
+        idempotencyKey,
+      },
+    );
+    const readback = await request(
+      profile,
+      `/api/v1/projects/${encodeURIComponent(restored.data.project.id)}/tasks/by-id/${encodeURIComponent(restored.data.task.id)}`,
+    );
+    if (readback.data.task.id !== restored.data.task.id)
+      throw new CliError("OUTPUT_CONTRACT_FAILED", "恢复后的任务回读失败", {
+        deletionId,
+      });
+    return output({
+      target,
+      idempotencyKey,
+      ...restored.data,
+      verification: "restore-after-readback",
+    });
   }
   if (group === "task" && command === "create") {
     const target = await inspectTarget(profile);

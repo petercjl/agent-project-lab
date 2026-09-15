@@ -1,7 +1,7 @@
 {
   "schemaVersion": "1",
   "name": "procli",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "defaultProfile": "nas",
   "capabilities": [
     {
@@ -89,6 +89,82 @@
         "structuredJson"
       ],
       "productionConfirmation": true
+    },
+    {
+      "id": "task.delete-context",
+      "command": "procli task delete-context",
+      "effect": "read",
+      "risk": "low",
+      "requiredInputs": ["project", "task"],
+      "optionalInputs": ["profile"],
+      "supports": [
+        "compactStateSnapshot",
+        "projectScopedVersion",
+        "contextToken",
+        "impactHash",
+        "structuredJson"
+      ]
+    },
+    {
+      "id": "task.delete",
+      "command": "procli task delete",
+      "effect": "recoverable-delete",
+      "risk": "high",
+      "requiredInputs": ["project", "task", "confirmTask"],
+      "optionalInputs": [
+        "dependencyPolicy",
+        "rewireTo",
+        "profile",
+        "idempotencyKey"
+      ],
+      "supports": [
+        "serverDryRun",
+        "exactNameConfirmation",
+        "projectScopedOptimisticConcurrency",
+        "impactHash",
+        "dependencyPolicy",
+        "idempotency",
+        "recoverableDeletion",
+        "postWriteReadback",
+        "structuredJson"
+      ],
+      "productionConfirmation": true,
+      "confirmationRequired": true
+    },
+    {
+      "id": "trash.list",
+      "command": "procli trash list",
+      "effect": "read",
+      "risk": "low",
+      "requiredInputs": [],
+      "optionalInputs": ["project", "profile"],
+      "supports": ["structuredJson"]
+    },
+    {
+      "id": "trash.get",
+      "command": "procli trash get",
+      "effect": "read",
+      "risk": "low",
+      "requiredInputs": ["deletionId"],
+      "optionalInputs": ["profile"],
+      "supports": ["manifest", "structuredJson"]
+    },
+    {
+      "id": "task.restore",
+      "command": "procli task restore",
+      "effect": "write",
+      "risk": "high",
+      "requiredInputs": ["deletionId", "confirmTask"],
+      "optionalInputs": ["profile", "idempotencyKey"],
+      "supports": [
+        "dryRun",
+        "exactNameConfirmation",
+        "idempotency",
+        "postWriteReadback",
+        "structuredJson"
+      ],
+      "productionConfirmation": true,
+      "confirmationRequired": true
     },
     {
       "id": "project.create",

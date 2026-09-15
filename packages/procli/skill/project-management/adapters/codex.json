@@ -124,6 +124,94 @@
       ]
     },
     {
+      "capability_id": "project.service.task.delete",
+      "implementation": {
+        "kind": "stable-cli",
+        "discovery": "Resolve procli from PATH and verify it with procli version and procli capabilities --json.",
+        "execution": "Resolve the exact project and task, preview the current deletion impact, obtain exact-name confirmation, then run procli task delete with the selected dependency policy and verify the recycle batch.",
+        "normalization": "Use the procli JSON envelope without reinterpretation."
+      },
+      "features": [
+        "profile_selection",
+        "target_identity_verification",
+        "compact_prewrite_snapshot",
+        "impact_preview",
+        "exact_name_confirmation",
+        "project_scoped_optimistic_concurrency",
+        "dependency_policy",
+        "recoverable_archive",
+        "idempotent_write",
+        "production_confirmation",
+        "post_write_readback",
+        "structured_json"
+      ],
+      "status": "tested",
+      "permissions": [
+        "Network access to the selected service",
+        "Authenticated task deletion permission and administrator permission for content-bearing tasks"
+      ],
+      "normalization": "Use the procli JSON envelope without reinterpretation.",
+      "tested_date": "2026-09-16",
+      "evidence": [
+        "Codex used source procli 0.5.0 against the authenticated local Profile to preview and recoverably delete both an empty task and a substantive Wiki task, read back completed deletion batches, verify active-list isolation and preserved file hashes, reject the default block policy when dependents existed, and exercise explicit detach."
+      ]
+    },
+    {
+      "capability_id": "project.service.trash.list",
+      "implementation": {
+        "kind": "stable-cli",
+        "discovery": "Resolve procli from PATH and verify it with procli version and procli capabilities --json.",
+        "execution": "Run procli trash list or trash get against the selected Profile.",
+        "normalization": "Use the procli JSON envelope without reinterpretation."
+      },
+      "features": [
+        "profile_selection",
+        "target_identity_verification",
+        "read_only",
+        "manifest_readback",
+        "structured_json"
+      ],
+      "status": "tested",
+      "permissions": [
+        "Network access to the selected service",
+        "Authenticated read access"
+      ],
+      "normalization": "Use the procli JSON envelope without reinterpretation.",
+      "tested_date": "2026-09-16",
+      "evidence": [
+        "Codex read the completed local deletion manifest by deletionId and verified the task snapshot, record IDs, retention, original paths, recycle destinations, and SHA-256 values."
+      ]
+    },
+    {
+      "capability_id": "project.service.task.restore",
+      "implementation": {
+        "kind": "stable-cli",
+        "discovery": "Resolve procli from PATH and verify it with procli version and procli capabilities --json.",
+        "execution": "Read the recycle batch, preview restoration, obtain exact-name confirmation, run procli task restore, and verify the task by ID.",
+        "normalization": "Use the procli JSON envelope without reinterpretation."
+      },
+      "features": [
+        "profile_selection",
+        "target_identity_verification",
+        "restore_preview",
+        "exact_name_confirmation",
+        "idempotent_write",
+        "production_confirmation",
+        "post_write_readback",
+        "structured_json"
+      ],
+      "status": "tested",
+      "permissions": [
+        "Network access to the selected service",
+        "Authenticated task restore permission"
+      ],
+      "normalization": "Use the procli JSON envelope without reinterpretation.",
+      "tested_date": "2026-09-16",
+      "evidence": [
+        "Codex restored empty and substantive tasks from local deletion manifests, verified the original task ID and dependency restoration, and matched the restored Wiki and history file SHA-256 values to the deletion preview."
+      ]
+    },
+    {
       "capability_id": "project.service.project.create",
       "implementation": {
         "kind": "stable-cli",

@@ -11,6 +11,7 @@ import {
   audit,
   writeFile,
   removeFile,
+  moveFile,
   safeFile,
   root,
 } from "./store.ts";
@@ -79,9 +80,14 @@ const taskView = (state: any, task: any) => {
     deletable: contentStatus === "empty",
   };
 };
+const activeTask = (state: any, id: string) => {
+  const task = get(state.tasks, id, "任务");
+  if (task.deletedAt) throw new Fault("NOT_FOUND", "任务不存在", 404);
+  return task;
+};
 const projectTasksInBoardOrder = (state: any, project: any) =>
   state.tasks
-    .filter((task: any) => task.projectId === project.id)
+    .filter((task: any) => task.projectId === project.id && !task.deletedAt)
     .map((task: any, index: number) => ({ task, index }))
     .sort((a: any, b: any) => {
       const stage =
@@ -231,6 +237,152 @@ const requireProjectContext = (project: any, token: any) => {
       409,
     );
 };
+const stableValue = (value: any): any =>
+  Array.isArray(value)
+    ? value.map(stableValue)
+    : value && typeof value === "object"
+      ? Object.fromEntries(
+          Object.keys(value)
+            .sort()
+            .map((key) => [key, stableValue(value[key])]),
+        )
+      : value;
+const impactHash = (value: any) =>
+  createHash("sha256")
+    .update(JSON.stringify(stableValue(value)))
+    .digest("hex");
+const taskFiles = async (state: any, task: any) => {
+  const page = state.pages.find(
+    (item: any) =>
+      !item.deletedAt &&
+      item.projectId === task.projectId &&
+      item.path === task.wikiPath,
+  );
+  const paths = [
+    ...(page ? [page.path] : []),
+    ...(page?.history || []).map((item: any) => item.path),
+    ...state.artifacts
+      .filter((item: any) => !item.deletedAt && item.taskId === task.id)
+      .map((item: any) => item.path),
+  ];
+  return Promise.all(
+    [...new Set(paths)].sort().map(async (relative) => {
+      try {
+        const content = await fs.readFile(
+          await safeFile(task.projectId, relative),
+        );
+        return {
+          path: relative,
+          size: content.length,
+          sha256: createHash("sha256").update(content).digest("hex"),
+        };
+      } catch (error: any) {
+        if (error.code === "ENOENT") return { path: relative, missing: true };
+        throw error;
+      }
+    }),
+  );
+};
+const taskDeleteImpact = async (
+  state: any,
+  project: any,
+  task: any,
+  dependencyPolicy = "block",
+  replacementTaskId = "",
+) => {
+  if (!["block", "detach", "rewire"].includes(dependencyPolicy))
+    throw new Fault("VALIDATION", "无效的下游依赖处理策略");
+  const tasks = projectTasksInBoardOrder(state, project);
+  const dependents = tasks.filter((item: any) =>
+    item.dependencies.includes(task.id),
+  );
+  let replacement: any = null;
+  if (dependencyPolicy === "rewire") {
+    replacement = tasks.find((item: any) => item.id === replacementTaskId);
+    if (!replacement || replacement.id === task.id)
+      throw new Fault(
+        "INVALID_DEPENDENCY",
+        "重连目标必须是本项目其他活动任务",
+        409,
+      );
+  }
+  const records = {
+    events: state.events.filter(
+      (item: any) => item.details?.taskId === task.id,
+    ),
+    runs: state.runs.filter(
+      (item: any) => !item.deletedAt && item.taskId === task.id,
+    ),
+    artifacts: state.artifacts.filter(
+      (item: any) => !item.deletedAt && item.taskId === task.id,
+    ),
+    notifications: state.notifications.filter(
+      (item: any) => !item.deletedAt && item.taskId === task.id,
+    ),
+    measurements: state.measurements.filter(
+      (item: any) => !item.deletedAt && item.taskId === task.id,
+    ),
+    pages: state.pages.filter(
+      (item: any) =>
+        !item.deletedAt &&
+        item.projectId === project.id &&
+        item.path === task.wikiPath,
+    ),
+  };
+  const files = await taskFiles(state, task);
+  const previous = tasks[tasks.indexOf(task) - 1] || null;
+  const next = tasks[tasks.indexOf(task) + 1] || null;
+  const impact = {
+    project: { id: project.id, name: project.name },
+    task: {
+      id: task.id,
+      title: task.title,
+      stage: task.stage,
+      status: task.status,
+      contentStatus: taskContentStatus(state, task),
+      boardOrder: task.boardOrder ?? 0,
+      version: task.version,
+    },
+    anchors: {
+      previousTaskId: previous?.id || null,
+      nextTaskId: next?.id || null,
+    },
+    dependencies: [...task.dependencies],
+    dependents: dependents.map((item: any) => ({
+      id: item.id,
+      title: item.title,
+      dependencies: [...item.dependencies],
+    })),
+    dependencyPolicy,
+    replacement: replacement
+      ? { id: replacement.id, title: replacement.title }
+      : null,
+    records: Object.fromEntries(
+      Object.entries(records).map(([key, items]: any) => [key, items.length]),
+    ),
+    files,
+    knowledge: {
+      provider: "local-markdown",
+      recoverable: true,
+      exclusive: records.pages.length + records.artifacts.length,
+      shared: 0,
+      external: 0,
+    },
+    retentionDays: 90,
+  };
+  return { impact, records, dependents, hash: impactHash(impact) };
+};
+async function rebuildWikiIndex(state: any, project: any) {
+  await writeFile(
+    project.id,
+    "wiki/index.md",
+    `# ${project.name}\n\n${project.goal || ""}\n\n` +
+      state.pages
+        .filter((page: any) => page.projectId === project.id && !page.deletedAt)
+        .map((page: any) => `- [${page.title}](${path.basename(page.path)})`)
+        .join("\n"),
+  );
+}
 async function createTaskFromPlan(
   state: any,
   project: any,
@@ -415,22 +567,27 @@ route("get", "/api/state", async () => {
       activeIds.has(project.id),
     ),
     tasks: state.tasks
-      .filter((item: any) => activeIds.has(item.projectId))
+      .filter((item: any) => activeIds.has(item.projectId) && !item.deletedAt)
       .map((item: any) => taskView(state, item)),
-    pages: state.pages.filter((item: any) => activeIds.has(item.projectId)),
-    artifacts: state.artifacts.filter((item: any) =>
-      activeIds.has(item.projectId),
+    pages: state.pages.filter(
+      (item: any) => activeIds.has(item.projectId) && !item.deletedAt,
     ),
-    runs: state.runs.filter((item: any) => activeIds.has(item.projectId)),
+    artifacts: state.artifacts.filter(
+      (item: any) => activeIds.has(item.projectId) && !item.deletedAt,
+    ),
+    runs: state.runs.filter(
+      (item: any) => activeIds.has(item.projectId) && !item.deletedAt,
+    ),
     events: state.events.filter(
       (item: any) => !item.projectId || activeIds.has(item.projectId),
     ),
-    notifications: state.notifications.filter((item: any) =>
-      activeIds.has(item.projectId),
+    notifications: state.notifications.filter(
+      (item: any) => activeIds.has(item.projectId) && !item.deletedAt,
     ),
-    measurements: state.measurements.filter((item: any) =>
-      activeIds.has(item.projectId),
+    measurements: state.measurements.filter(
+      (item: any) => activeIds.has(item.projectId) && !item.deletedAt,
     ),
+    deletionBatches: state.deletionBatches || [],
   };
 });
 route("get", "/api/capabilities", () => ({
@@ -454,7 +611,12 @@ route("get", "/api/capabilities", () => ({
     "project.node.delete-empty",
     "project.board.reorder",
     "task.create",
-    "task.delete-empty",
+    "task.delete-context",
+    "task.delete-preview",
+    "task.delete-recoverable",
+    "task.restore",
+    "trash.list",
+    "trash.read",
     "task.update",
     "task.start",
     "task.submit",
@@ -845,10 +1007,13 @@ route("get", "/api/v1/projects/resolve/by-name", async (req) => {
   const project = activeProjectByName(s.projects, req.query.name);
   return {
     project,
-    taskCount: s.tasks.filter((item: any) => item.projectId === project.id)
-      .length,
+    taskCount: s.tasks.filter(
+      (item: any) => item.projectId === project.id && !item.deletedAt,
+    ).length,
     wikiCount:
-      s.pages.filter((item: any) => item.projectId === project.id).length + 1,
+      s.pages.filter(
+        (item: any) => item.projectId === project.id && !item.deletedAt,
+      ).length + 1,
   };
 });
 route("delete", "/api/v1/projects/by-name", (req) => {
@@ -1024,7 +1189,7 @@ route("post", "/api/v1/projects/:id/tasks", (req) =>
 route("get", "/api/v1/projects/:id/tasks/by-id/:taskId", async (req) => {
   const s: any = await read();
   const project = activeProject(s.projects, req.params.id);
-  const task = get(s.tasks, req.params.taskId, "任务");
+  const task = activeTask(s, req.params.taskId);
   if (task.projectId !== project.id)
     throw new Fault("NOT_FOUND", "任务不存在", 404);
   return {
@@ -1108,6 +1273,331 @@ route("get", "/api/v1/projects/:id/tasks/resolve/by-name", async (req) => {
     },
   };
 });
+route(
+  "get",
+  "/api/v1/projects/:id/tasks/:taskId/delete-context",
+  async (req) => {
+    const s: any = await read();
+    const project = activeProject(s.projects, req.params.id);
+    const task = activeTask(s, req.params.taskId);
+    if (task.projectId !== project.id)
+      throw new Fault("NOT_FOUND", "任务不存在", 404);
+    const planned = await taskDeleteImpact(s, project, task);
+    return {
+      project: {
+        id: project.id,
+        name: project.name,
+        projectVersion: projectVersion(project),
+      },
+      task: planned.impact.task,
+      contextToken: projectContextToken(project),
+      permissions: {
+        canDeleteEmpty: true,
+        canDeleteWithContent: req.auth?.systemRole === "admin",
+        systemRole: req.auth?.systemRole || "member",
+      },
+      impact: planned.impact,
+      impactHash: planned.hash,
+    };
+  },
+);
+route(
+  "post",
+  "/api/v1/projects/:id/tasks/:taskId/delete-preview",
+  async (req) => {
+    const s: any = await read();
+    const project = activeProject(s.projects, req.params.id);
+    requireProjectContext(project, req.body.contextToken);
+    const task = activeTask(s, req.params.taskId);
+    if (task.projectId !== project.id)
+      throw new Fault("NOT_FOUND", "任务不存在", 404);
+    const planned = await taskDeleteImpact(
+      s,
+      project,
+      task,
+      req.body.dependencyPolicy || "block",
+      req.body.replacementTaskId || "",
+    );
+    return {
+      dryRun: true,
+      contextToken: req.body.contextToken,
+      impactHash: planned.hash,
+      canDelete:
+        !planned.dependents.length || req.body.dependencyPolicy !== "block",
+      impact: planned.impact,
+    };
+  },
+);
+route("delete", "/api/v1/projects/:id/tasks/:taskId", (req) =>
+  mutate(req, async (s: any, who: string) => {
+    const project = activeProject(s.projects, req.params.id);
+    requireProjectContext(project, req.body.contextToken);
+    const task = activeTask(s, req.params.taskId);
+    if (task.projectId !== project.id)
+      throw new Fault("NOT_FOUND", "任务不存在", 404);
+    if (req.body.confirmTask !== task.title)
+      throw new Fault(
+        "DELETE_CONFIRMATION_MISMATCH",
+        "确认任务名称必须与当前任务名称完全一致",
+        409,
+      );
+    const policy = req.body.dependencyPolicy || "block";
+    const planned = await taskDeleteImpact(
+      s,
+      project,
+      task,
+      policy,
+      req.body.replacementTaskId || "",
+    );
+    if (req.body.impactHash !== planned.hash)
+      throw new Fault(
+        "DELETE_SCOPE_CHANGED",
+        "删除影响范围已变化，请重新预演并确认",
+        409,
+      );
+    if (planned.impact.task.contentStatus !== "empty") requireAdmin(req);
+    if (planned.dependents.length && policy === "block")
+      throw new Fault(
+        "DEPENDENTS_EXIST",
+        "存在依赖该任务的下游任务，请明确选择 detach 或 rewire",
+        409,
+      );
+    const deletionId = uid();
+    const deletedAt = now();
+    const retentionUntil = new Date(
+      Date.parse(deletedAt) + 90 * 24 * 60 * 60 * 1000,
+    ).toISOString();
+    const dependentSnapshots = planned.dependents.map((item: any) => ({
+      id: item.id,
+      dependencies: [...item.dependencies],
+    }));
+    for (const dependent of planned.dependents) {
+      const dependencies = dependent.dependencies.filter(
+        (id: string) => id !== task.id,
+      );
+      if (policy === "rewire") dependencies.push(req.body.replacementTaskId);
+      setDependencies(s, dependent, [...new Set(dependencies)]);
+      dependent.version++;
+      dependent.updatedAt = deletedAt;
+    }
+    const movedFiles = [];
+    for (const file of planned.impact.files) {
+      if (file.missing) continue;
+      const destination = `wiki/recycle/${deletionId}/files/${file.path}`;
+      await moveFile(project.id, file.path, destination);
+      movedFiles.push({ ...file, destination });
+    }
+    const snapshot = JSON.parse(JSON.stringify(task));
+    task.deletedAt = deletedAt;
+    task.deletedBy = who;
+    task.deletionId = deletionId;
+    task.deletionState = "completed";
+    const recordIds: any = {};
+    for (const [key, records] of Object.entries(planned.records) as any) {
+      recordIds[key] = records.map((record: any) => record.id);
+      if (key === "events") continue;
+      for (const record of records) {
+        record.deletedAt = deletedAt;
+        record.deletionId = deletionId;
+      }
+    }
+    const manifest = {
+      version: 1,
+      deletionId,
+      projectId: project.id,
+      task: snapshot,
+      impact: planned.impact,
+      impactHash: planned.hash,
+      dependentSnapshots,
+      recordIds,
+      files: movedFiles,
+      requestedBy: who,
+      deletedAt,
+      retentionUntil,
+    };
+    await writeFile(
+      project.id,
+      `wiki/recycle/${deletionId}/manifest.json`,
+      JSON.stringify(manifest, null, 2),
+    );
+    const batch = {
+      id: deletionId,
+      projectId: project.id,
+      scopeType: "task",
+      scopeId: task.id,
+      taskTitle: task.title,
+      state: "completed",
+      impactHash: planned.hash,
+      manifestPath: `wiki/recycle/${deletionId}/manifest.json`,
+      manifest,
+      requestedBy: who,
+      createdAt: deletedAt,
+      updatedAt: deletedAt,
+      retentionUntil,
+    };
+    s.deletionBatches ||= [];
+    s.deletionBatches.push(batch);
+    await rebuildWikiIndex(s, project);
+    audit(s, who, "task.deleted", project.id, {
+      taskId: task.id,
+      title: task.title,
+      deletionId,
+      dependencyPolicy: policy,
+    });
+    return {
+      deletionId,
+      state: batch.state,
+      project: {
+        id: project.id,
+        name: project.name,
+        projectVersion: projectVersion(project),
+      },
+      task: { id: task.id, title: task.title, deletedAt },
+      manifestPath: batch.manifestPath,
+      retentionUntil,
+      verification: "delete-after-readback",
+    };
+  }),
+);
+route("get", "/api/v1/trash", async (req: any) => {
+  const s: any = await read();
+  const projectId = String(req.query.projectId || "");
+  return (s.deletionBatches || [])
+    .filter((item: any) => !projectId || item.projectId === projectId)
+    .map(
+      ({ manifest: _manifest, restoreResult: _restoreResult, ...item }: any) =>
+        item,
+    )
+    .sort((a: any, b: any) => b.createdAt.localeCompare(a.createdAt));
+});
+route("get", "/api/v1/trash/:deletionId", async (req) => {
+  const s: any = await read();
+  return get(s.deletionBatches || [], req.params.deletionId, "回收记录");
+});
+route("post", "/api/v1/trash/:deletionId/restore-preview", async (req) => {
+  const s: any = await read();
+  const batch = get(s.deletionBatches || [], req.params.deletionId, "回收记录");
+  if (batch.state !== "completed")
+    throw new Fault("INVALID_RESTORE_STATE", "当前回收记录不能恢复", 409);
+  const project = activeProject(s.projects, batch.projectId);
+  const conflict = projectTasksInBoardOrder(s, project).find(
+    (item: any) => taskNameKey(item.title) === taskNameKey(batch.taskTitle),
+  );
+  return {
+    dryRun: true,
+    deletionId: batch.id,
+    project: { id: project.id, name: project.name },
+    task: { id: batch.scopeId, title: batch.taskTitle },
+    canRestore: !conflict,
+    conflict: conflict ? { id: conflict.id, title: conflict.title } : null,
+    files: batch.manifest.files,
+  };
+});
+route("post", "/api/v1/trash/:deletionId/restore", (req) =>
+  mutate(req, async (s: any, who: string) => {
+    const batch = get(
+      s.deletionBatches || [],
+      req.params.deletionId,
+      "回收记录",
+    );
+    if (batch.state === "restored") return batch.restoreResult;
+    if (batch.state !== "completed")
+      throw new Fault("INVALID_RESTORE_STATE", "当前回收记录不能恢复", 409);
+    if (req.body.confirmTask !== batch.taskTitle)
+      throw new Fault(
+        "RESTORE_CONFIRMATION_MISMATCH",
+        "确认任务名称必须与回收记录完全一致",
+        409,
+      );
+    const project = activeProject(s.projects, batch.projectId);
+    const conflict = projectTasksInBoardOrder(s, project).find(
+      (item: any) => taskNameKey(item.title) === taskNameKey(batch.taskTitle),
+    );
+    if (conflict)
+      throw new Fault("RESTORE_CONFLICT", "项目中已存在同名活动任务", 409);
+    const task = get(s.tasks, batch.scopeId, "回收任务");
+    for (const file of batch.manifest.files) {
+      try {
+        await fs.access(await safeFile(project.id, file.path));
+        throw new Fault(
+          "RESTORE_CONFLICT",
+          `恢复目标已存在：${file.path}`,
+          409,
+        );
+      } catch (error: any) {
+        if (error instanceof Fault) throw error;
+        if (error.code !== "ENOENT") throw error;
+      }
+      await moveFile(project.id, file.destination, file.path);
+      const content = await fs.readFile(await safeFile(project.id, file.path));
+      if (createHash("sha256").update(content).digest("hex") !== file.sha256)
+        throw new Fault(
+          "FILE_INTEGRITY",
+          `恢复文件校验失败：${file.path}`,
+          409,
+        );
+    }
+    Object.assign(task, batch.manifest.task);
+    delete task.deletedAt;
+    delete task.deletedBy;
+    delete task.deletionId;
+    delete task.deletionState;
+    for (const [key, ids] of Object.entries(batch.manifest.recordIds) as any) {
+      if (key === "events") continue;
+      for (const id of ids) {
+        const record = s[key].find((item: any) => item.id === id);
+        if (record) {
+          delete record.deletedAt;
+          delete record.deletionId;
+        }
+      }
+    }
+    const warnings = [];
+    for (const saved of batch.manifest.dependentSnapshots) {
+      const dependent = s.tasks.find(
+        (item: any) => item.id === saved.id && !item.deletedAt,
+      );
+      if (!dependent) {
+        warnings.push(`下游任务已不存在：${saved.id}`);
+        continue;
+      }
+      dependent.dependencies = saved.dependencies.filter((id: string) =>
+        s.tasks.some((item: any) => item.id === id && !item.deletedAt),
+      );
+      dependent.version++;
+      dependent.updatedAt = now();
+    }
+    if (!project.stages.includes(task.stage)) {
+      project.stages.push("待整理");
+      task.stage = "待整理";
+      warnings.push("原节点已不存在，任务已恢复到待整理");
+    }
+    batch.state = "restored";
+    batch.restoredAt = now();
+    batch.restoredBy = who;
+    batch.updatedAt = batch.restoredAt;
+    await rebuildWikiIndex(s, project);
+    audit(s, who, "task.restored", project.id, {
+      taskId: task.id,
+      title: task.title,
+      deletionId: batch.id,
+      warnings,
+    });
+    batch.restoreResult = {
+      deletionId: batch.id,
+      state: batch.state,
+      project: {
+        id: project.id,
+        name: project.name,
+        projectVersion: projectVersion(project),
+      },
+      task: taskView(s, task),
+      warnings,
+      verification: "restore-after-readback",
+    };
+    return batch.restoreResult;
+  }),
+);
 route("post", "/api/projects/:id/nodes", (req) =>
   mutate(req, (s: any, who: string) => {
     const project = activeProject(s.projects, req.params.id);
@@ -1222,18 +1712,16 @@ route("post", "/api/tasks", (req) =>
     return createTaskFromPlan(s, p, plan, who, requestSource(req));
   }),
 );
-route("delete", "/api/tasks/:id", (req) =>
-  mutate(req, async (s: any, who: string) => {
-    const task = get(s.tasks, req.params.id, "任务");
-    activeProject(s.projects, task.projectId);
-    const [deleted] = await removeEmptyTasks(s, [task], who);
-    audit(s, who, "task.deleted", task.projectId, deleted);
-    return { ...deleted, contentStatus: "empty" };
-  }),
-);
+route("delete", "/api/tasks/:id", () => {
+  throw new Fault(
+    "RECOVERABLE_DELETE_REQUIRED",
+    "请先通过 v1 删除预演接口确认影响范围，再执行可恢复删除",
+    409,
+  );
+});
 route("patch", "/api/tasks/:id", (req) =>
   mutate(req, (s: any, who: string) => {
-    const t = get(s.tasks, req.params.id);
+    const t = activeTask(s, req.params.id);
     const project = activeProject(s.projects, t.projectId);
     if (req.body.version !== t.version)
       throw new Fault("VERSION_CONFLICT", "任务已更新，请刷新后重试", 409);
@@ -1258,6 +1746,7 @@ route("patch", "/api/tasks/:id", (req) =>
             s.tasks.some(
               (item: any) =>
                 item.projectId === project.id &&
+                !item.deletedAt &&
                 item.id !== t.id &&
                 taskNameKey(item.title) === key,
             )
@@ -1289,7 +1778,7 @@ route("patch", "/api/tasks/:id", (req) =>
 );
 route("post", "/api/tasks/:id/actions/:action", (req) =>
   mutate(req, (s: any, who: string) => {
-    const t = get(s.tasks, req.params.id);
+    const t = activeTask(s, req.params.id);
     activeProject(s.projects, t.projectId);
     if (req.body.version !== undefined && req.body.version !== t.version)
       throw new Fault("VERSION_CONFLICT", "任务已更新，请刷新", 409);
@@ -1310,7 +1799,7 @@ route("get", "/api/projects/:id/wiki", async (req: any) => {
   activeProject(s.projects, req.params.id);
   const rel = String(req.query.path || "wiki/index.md");
   const page = s.pages.find(
-    (p: any) => p.projectId === req.params.id && p.path === rel,
+    (p: any) => !p.deletedAt && p.projectId === req.params.id && p.path === rel,
   );
   return {
     content: await fs.readFile(await safeFile(req.params.id, rel), "utf8"),
@@ -1325,7 +1814,8 @@ route("put", "/api/projects/:id/wiki", (req) =>
       throw new Fault("VALIDATION", "Wiki 使用 wiki/ 下的 .md 文件");
     const content = required(req.body.content, "正文");
     let p = s.pages.find(
-      (x: any) => x.projectId === req.params.id && x.path === rel,
+      (x: any) =>
+        !x.deletedAt && x.projectId === req.params.id && x.path === rel,
     );
     if (p && req.body.version !== p.version)
       throw new Fault("VERSION_CONFLICT", "Wiki 已被修改，请刷新后重试", 409);
@@ -1364,7 +1854,9 @@ route("put", "/api/projects/:id/wiki", (req) =>
     if (p.substantive) {
       const task = s.tasks.find(
         (item: any) =>
-          item.projectId === req.params.id && item.wikiPath === rel,
+          !item.deletedAt &&
+          item.projectId === req.params.id &&
+          item.wikiPath === rel,
       );
       if (task) promoteTaskContent(task, "substantive");
     }
@@ -1382,7 +1874,9 @@ route("get", "/api/projects/:id/search", async (req: any) => {
   const q = String(req.query.q || "").toLowerCase();
   if (!q) return [];
   const results = [];
-  for (const p of s.pages.filter((x: any) => x.projectId === req.params.id)) {
+  for (const p of s.pages.filter(
+    (x: any) => !x.deletedAt && x.projectId === req.params.id,
+  )) {
     const content = await fs.readFile(
       await safeFile(p.projectId, p.path),
       "utf8",
@@ -1487,7 +1981,7 @@ app.post(
     try {
       if (!req.file) throw new Fault("VALIDATION", "请选择文件");
       const a = await mutate(req, async (s: any, who: string) => {
-        const t = get(s.tasks, req.params.id);
+        const t = activeTask(s, req.params.id);
         activeProject(s.projects, t.projectId);
         const id = uid();
         const name = Buffer.from(req.file.originalname, "latin1")
@@ -1520,6 +2014,7 @@ app.get("/api/artifacts/:id/download", async (req, res, next) => {
   try {
     const s: any = await read();
     const a = get(s.artifacts, req.params.id);
+    if (a.deletedAt) throw new Fault("NOT_FOUND", "附件不存在", 404);
     activeProject(s.projects, a.projectId);
     res.download(await safeFile(a.projectId, a.path), a.name);
   } catch (e) {
@@ -1528,7 +2023,7 @@ app.get("/api/artifacts/:id/download", async (req, res, next) => {
 });
 route("post", "/api/runs", (req) =>
   mutate(req, (s: any, who: string) => {
-    const t = get(s.tasks, req.body.taskId);
+    const t = activeTask(s, req.body.taskId);
     activeProject(s.projects, t.projectId);
     const r = {
       id: uid(),
@@ -1550,6 +2045,7 @@ route("post", "/api/runs", (req) =>
 route("patch", "/api/runs/:id", (req) =>
   mutate(req, (s: any, who: string) => {
     const r = get(s.runs, req.params.id);
+    if (r.deletedAt) throw new Fault("NOT_FOUND", "运行不存在", 404);
     activeProject(s.projects, r.projectId);
     if (r.status !== "running")
       throw new Fault("INVALID_STATE", "运行已经结束", 409);
@@ -1562,7 +2058,7 @@ route("patch", "/api/runs/:id", (req) =>
       endedAt: now(),
     });
     if (String(r.output || "").trim()) {
-      const task = get(s.tasks, r.taskId, "任务");
+      const task = activeTask(s, r.taskId);
       promoteTaskContent(task, "substantive");
     }
     audit(s, who, "run.finished", r.projectId, r);

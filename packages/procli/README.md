@@ -46,6 +46,28 @@ procli task create --project "新品项目" --node "市场调研" \
 
 本地 Profile 确认预演后移除 `--dry-run` 即可写入；生产 Profile 还需要 `--yes`。新任务默认添加到节点末尾，可使用 `--before-task`、`--after-task` 指定位置，使用 `--depends-on` 显式指定依赖。
 
+任务删除采用可恢复链路。CLI 会读取当前状态、计算影响哈希，并把任务 Wiki、历史版本和附件移动到按 `deletionId` 隔离的回收目录。存在下游依赖时默认阻止删除，只有明确选择 `detach` 或 `rewire` 才会继续：
+
+```bash
+procli task delete-context --project "新品项目" --task "完成市场与竞品调研" --json
+procli task delete --project "新品项目" --task "完成市场与竞品调研" \
+  --confirm-task "完成市场与竞品调研" --dependency-policy block --dry-run --json
+procli task delete --project "新品项目" --task "完成市场与竞品调研" \
+  --confirm-task "完成市场与竞品调研" --dependency-policy detach \
+  --idempotency-key "<UUID>" --json
+```
+
+查看回收记录并恢复任务：
+
+```bash
+procli trash list --project "新品项目" --json
+procli trash get --deletion-id "<deletionId>" --json
+procli task restore --deletion-id "<deletionId>" \
+  --confirm-task "完成市场与竞品调研" --dry-run --json
+```
+
+恢复写入时移除 `--dry-run`；生产 Profile 还需要 `--yes`。任务默认保留 90 天，当前版本不自动彻底清除。
+
 商品项目默认生成标准生命周期 SOP。Agent 也可以提交自定义 SOP；每个节点都必须有名称和工作说明：
 
 ```json

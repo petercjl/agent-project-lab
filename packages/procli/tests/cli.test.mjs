@@ -29,6 +29,8 @@ function run(args, env = {}) {
 async function mockService(environment) {
   let creates = 0;
   let taskCreates = 0;
+  let taskDeletes = 0;
+  let taskRestores = 0;
   let deletes = 0;
   let deleted = false;
   let lastCreateBody;
@@ -339,6 +341,144 @@ async function mockService(environment) {
           },
         }),
       );
+    if (
+      req.url === "/api/v1/projects/project-1/tasks/task-1/delete-context" &&
+      req.method === "GET"
+    )
+      return res.end(
+        JSON.stringify({
+          ok: true,
+          data: {
+            project: { id: "project-1", name: "Test", projectVersion },
+            task: {
+              id: "task-1",
+              title: "市场调研",
+              contentStatus: "substantive",
+            },
+            contextToken: contextToken(),
+            permissions: { canDeleteWithContent: true },
+            impactHash: "impact-1",
+            impact: {
+              task: { id: "task-1", title: "市场调研" },
+              dependents: [],
+            },
+          },
+        }),
+      );
+    if (
+      req.url === "/api/v1/projects/project-1/tasks/task-1/delete-preview" &&
+      req.method === "POST"
+    )
+      return res.end(
+        JSON.stringify({
+          ok: true,
+          data: {
+            dryRun: true,
+            contextToken: contextToken(),
+            impactHash: "impact-1",
+            canDelete: true,
+            impact: {
+              task: {
+                id: "task-1",
+                title: "市场调研",
+                contentStatus: "substantive",
+              },
+              dependents: [],
+              files: [{ path: "wiki/market.md", sha256: "abc" }],
+              retentionDays: 90,
+            },
+          },
+        }),
+      );
+    if (
+      req.url === "/api/v1/projects/project-1/tasks/task-1" &&
+      req.method === "DELETE"
+    ) {
+      taskDeletes++;
+      projectVersion++;
+      return res.end(
+        JSON.stringify({
+          ok: true,
+          data: {
+            deletionId: "deletion-1",
+            state: "completed",
+            project: { id: "project-1", name: "Test", projectVersion },
+            task: { id: "task-1", title: "市场调研" },
+            manifestPath: "wiki/recycle/deletion-1/manifest.json",
+            retentionUntil: "2026-12-14T00:00:00.000Z",
+          },
+        }),
+      );
+    }
+    if (req.url === "/api/v1/trash" && req.method === "GET")
+      return res.end(
+        JSON.stringify({
+          ok: true,
+          data: [
+            { id: "deletion-1", taskTitle: "市场调研", state: "completed" },
+          ],
+        }),
+      );
+    if (req.url === "/api/v1/trash/deletion-1" && req.method === "GET")
+      return res.end(
+        JSON.stringify({
+          ok: true,
+          data: {
+            id: "deletion-1",
+            taskTitle: "市场调研",
+            state: taskRestores ? "restored" : "completed",
+            manifest: { files: [{ path: "wiki/market.md", sha256: "abc" }] },
+          },
+        }),
+      );
+    if (
+      req.url === "/api/v1/trash/deletion-1/restore-preview" &&
+      req.method === "POST"
+    )
+      return res.end(
+        JSON.stringify({
+          ok: true,
+          data: {
+            dryRun: true,
+            deletionId: "deletion-1",
+            canRestore: true,
+            conflict: null,
+            files: [{ path: "wiki/market.md", sha256: "abc" }],
+          },
+        }),
+      );
+    if (
+      req.url === "/api/v1/trash/deletion-1/restore" &&
+      req.method === "POST"
+    ) {
+      taskRestores++;
+      projectVersion++;
+      return res.end(
+        JSON.stringify({
+          ok: true,
+          data: {
+            deletionId: "deletion-1",
+            state: "restored",
+            project: { id: "project-1", name: "Test", projectVersion },
+            task: { id: "task-1", title: "市场调研" },
+            warnings: [],
+          },
+        }),
+      );
+    }
+    if (
+      req.url === "/api/v1/projects/project-1/tasks/by-id/task-1" &&
+      req.method === "GET"
+    )
+      return res.end(
+        JSON.stringify({
+          ok: true,
+          data: {
+            project: { id: "project-1", name: "Test", projectVersion },
+            task: { id: "task-1", title: "市场调研" },
+          },
+        }),
+      );
     if (req.url === "/api/v1/projects/by-name" && req.method === "DELETE") {
       deletes++;
       deleted = true;
@@ -388,6 +528,8 @@ async function mockService(environment) {
     url: `http://127.0.0.1:${server.address().port}`,
     creates: () => creates,
     taskCreates: () => taskCreates,
+    taskDeletes: () => taskDeletes,
+    taskRestores: () => taskRestores,
     deletes: () => deletes,
     lastCreateBody: () => lastCreateBody,
     lastTaskBody: () => lastTaskBody,
@@ -672,6 +814,127 @@ test("custom SOP creation validates and sends node names with descriptions", asy
   assert.equal(created.code, 0);
   assert.equal(created.json.data.tasks.count, 2);
   assert.equal(mock.lastCreateBody().sop.nodes[1].description, "形成评审结论");
+});
+
+test("task deletion previews, archives, reads trash, and restores by id", async (t) => {
+  const mock = await mockService("development");
+  t.after(() => mock.server.close());
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), "procli-task-recycle-"));
+  t.after(() => fs.rm(home, { recursive: true, force: true }));
+  const env = { PROCLI_CONFIG_PATH: path.join(home, "config.json") };
+  await run(
+    [
+      "profile",
+      "add",
+      "local",
+      "--url",
+      mock.url,
+      "--environment",
+      "development",
+    ],
+    env,
+  );
+  await run(["profile", "use", "local"], env);
+
+  const context = await run(
+    ["task", "delete-context", "--project", "Test", "--task", "市场调研"],
+    env,
+  );
+  assert.equal(context.code, 0);
+  assert.equal(context.json.data.impactHash, "impact-1");
+
+  const preview = await run(
+    [
+      "task",
+      "delete",
+      "--project",
+      "Test",
+      "--task",
+      "市场调研",
+      "--confirm-task",
+      "市场调研",
+      "--dry-run",
+    ],
+    env,
+  );
+  assert.equal(preview.code, 0);
+  assert.equal(preview.json.data.dryRun, true);
+  assert.equal(mock.taskDeletes(), 0);
+
+  const mismatch = await run(
+    [
+      "task",
+      "delete",
+      "--project",
+      "Test",
+      "--task",
+      "市场调研",
+      "--confirm-task",
+      "市场调研x",
+    ],
+    env,
+  );
+  assert.equal(mismatch.code, 1);
+  assert.equal(mismatch.json.error.code, "DELETE_CONFIRMATION_MISMATCH");
+  assert.equal(mock.taskDeletes(), 0);
+
+  const deleted = await run(
+    [
+      "task",
+      "delete",
+      "--project",
+      "Test",
+      "--task",
+      "市场调研",
+      "--confirm-task",
+      "市场调研",
+      "--idempotency-key",
+      "delete-key",
+    ],
+    env,
+  );
+  assert.equal(deleted.code, 0);
+  assert.equal(deleted.json.data.deletionId, "deletion-1");
+  assert.equal(deleted.json.data.verification, "delete-after-readback");
+  assert.equal(mock.taskDeletes(), 1);
+
+  const trash = await run(["trash", "get", "--deletion-id", "deletion-1"], env);
+  assert.equal(trash.code, 0);
+  assert.equal(trash.json.data.manifest.files[0].path, "wiki/market.md");
+
+  const restorePreview = await run(
+    [
+      "task",
+      "restore",
+      "--deletion-id",
+      "deletion-1",
+      "--confirm-task",
+      "市场调研",
+      "--dry-run",
+    ],
+    env,
+  );
+  assert.equal(restorePreview.code, 0);
+  assert.equal(restorePreview.json.data.canRestore, true);
+  assert.equal(mock.taskRestores(), 0);
+
+  const restored = await run(
+    [
+      "task",
+      "restore",
+      "--deletion-id",
+      "deletion-1",
+      "--confirm-task",
+      "市场调研",
+      "--idempotency-key",
+      "restore-key",
+    ],
+    env,
+  );
+  assert.equal(restored.code, 0);
+  assert.equal(restored.json.data.task.id, "task-1");
+  assert.equal(restored.json.data.verification, "restore-after-readback");
+  assert.equal(mock.taskRestores(), 1);
 });
 
 test("project deletion requires exact confirmation and verifies soft deletion", async (t) => {

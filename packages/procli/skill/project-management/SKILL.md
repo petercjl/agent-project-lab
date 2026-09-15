@@ -1,6 +1,6 @@
 ---
 name: project-management
-description: Read and operate projects through procli, including natural-language project/task matching, directory and task inspection, concurrency-safe task creation, project creation, administrator deletion, and local/NAS target selection. Invoke this Skill only when the user's request explicitly contains the keyword "procli" or explicitly asks to use procli.
+description: Read and operate projects through procli, including natural-language project/task matching, directory and task inspection, concurrency-safe task creation, recoverable task deletion and restoration, project creation, administrator deletion, and local/NAS target selection. Invoke this Skill only when the user's request explicitly contains the keyword "procli" or explicitly asks to use procli.
 ---
 
 # Project Management
@@ -9,7 +9,7 @@ Use the bundled `procli` executable as the only execution surface. Load the curr
 
 `procli` is the global explicit trigger word for this Skill. When it appears as the requested project-operation tool, route here even if the user does not mention the Skill name. Infer the operation and structured inputs from the surrounding natural language, then follow the matching main line.
 
-The logical capabilities are `project.service.directory.list`, `project.service.task.list`, `project.service.task.read`, `project.service.task.create`, `project.service.project.create`, and `project.service.project.delete`. If the matching adapter mapping is unresolved or unsupported, return `CAPABILITY_UNAVAILABLE`.
+The logical capabilities are `project.service.directory.list`, `project.service.task.list`, `project.service.task.read`, `project.service.task.create`, `project.service.task.delete`, `project.service.trash.list`, `project.service.task.restore`, `project.service.project.create`, and `project.service.project.delete`. If the matching adapter mapping is unresolved or unsupported, return `CAPABILITY_UNAVAILABLE`.
 
 ## Contract
 
@@ -121,6 +121,50 @@ Task creation is a state-dependent write. The web workspace and `procli` may bot
 6. Show the selected Profile, URL, environment, project name, SOP mode, and node count. The user's request to create is authorization for the local write. Production additionally requires `--yes`.
 7. Execute the matching command. Accept success only when `ok=true`, the target matches the preview, and the CLI returns a write-after-readback project, task count, and Wiki count.
 
+## Recoverably delete a task
+
+Task deletion always requires a fresh impact preview and a separate user confirmation. Never use the legacy task DELETE endpoint, inspect the database directly, or infer the deletion scope from a previous read.
+
+1. Resolve the exact project and task through the read-only natural-language flow. Read the current deletion context:
+
+   ```bash
+   procli task delete-context --project "<project>" --task "<task>" --json
+   ```
+
+2. Preview with the default dependency policy `block` unless the user explicitly requested `detach` or `rewire`:
+
+   ```bash
+   procli task delete --project "<project>" --task "<task>" \
+     --confirm-task "<exact task>" --dependency-policy block --dry-run --json
+   ```
+
+   For `rewire`, also provide `--rewire-to "<exact same-project task>"`. Show the selected Profile, exact task, content status, Wiki and file count, runs, dependent tasks, policy, recoverability, and 90-day retention.
+
+3. If dependents exist under `block`, ask whether to cancel, detach them, or rewire them to one exact current task. Re-run the preview after the choice. Do not silently detach dependencies.
+4. Obtain explicit confirmation for the displayed impact. The confirmation must name the exact task. Content-bearing tasks require administrator authorization. Production additionally requires `--yes`.
+5. Execute the same command without `--dry-run`, preserving the chosen policy and one idempotency key. Accept success only with a `deletionId`, `completed` state, manifest path, retention time, advanced project version, and `delete-after-readback` verification.
+6. On `PROJECT_STATE_CHANGED` or `DELETE_SCOPE_CHANGED`, return to Step 1, display the changed impact, and obtain a new confirmation. On an unknown result, retry only with the same idempotency key.
+
+## Read the recycle bin and restore a task
+
+- List or inspect recoverable deletions without mutation:
+
+  ```bash
+  procli trash list [--project "<project>"] --json
+  procli trash get --deletion-id "<id>" --json
+  ```
+
+- To restore, uniquely resolve the deletion record, preview first, show conflicts and files, then obtain exact task-name confirmation:
+
+  ```bash
+  procli task restore --deletion-id "<id>" \
+    --confirm-task "<exact task>" --dry-run --json
+  procli task restore --deletion-id "<id>" \
+    --confirm-task "<exact task>" --idempotency-key "<uuid>" --json
+  ```
+
+  Production additionally requires `--yes`. Accept success only with the original task ID, warnings, advanced project version, and `restore-after-readback` verification. Multiple plausible “刚才删除的任务” records require the user to select an exact `deletionId`.
+
 ## Delete a project
 
 Deletion is a recoverable soft delete, but it is a high-risk administrator action.
@@ -152,12 +196,19 @@ Deletion is a recoverable soft delete, but it is a high-risk administrator actio
 - `CONTEXT_TOKEN_REQUIRED`: return to task creation Step 1 and obtain a current context token.
 - `PROJECT_STATE_CHANGED`: return to task creation Step 1; never write with the stale token.
 - `TASK_NAME_CONFLICT`: ask for a distinct project-wide task title.
+- `DEPENDENTS_EXIST`: show the exact dependents and ask the user to cancel, detach, or rewire; never choose a destructive policy automatically.
+- `DELETE_SCOPE_CHANGED`: restart the deletion context and preview flow, then request confirmation for the changed impact.
+- `DELETE_CONFIRMATION_MISMATCH`: request the exact current task title and rebuild the preview.
+- `RESTORE_CONFIRMATION_MISMATCH`: request the exact task title stored in the deletion manifest.
+- `RESTORE_CONFLICT`: report the active task or file conflict and stop without overwriting or renaming.
+- `INVALID_RESTORE_STATE`: report the real recycle state and stop.
+- `FEATURE_UNSUPPORTED` during deletion: the content Provider has no verified archive-and-restore contract; stop without mutation.
 - `NODE_NOT_FOUND`, `MEMBER_NOT_FOUND`, `MEMBER_AMBIGUOUS`, `INVALID_DEPENDENCY`, or `POSITION_TASK_INVALID`: show the exact current candidates from a fresh creation context and ask one concise clarification question.
 - Multiple natural-language candidates: report the exact candidate names and current statuses when available, ask one concise clarification question, and return to the relevant resolution step after the user answers.
 - Unknown write result: retry only with the same idempotency key.
 
 ## Output contract
 
-For directory reads, report folder/project counts and the requested structured listing. For task lists, report the project identity, task count, and all nodes. For task detail, report the current status plus all returned history and related record groups. For task creation, report the task ID/title, exact project/node, target Profile/environment, owner, placement, resulting project version, and write-after-readback verification. For project creation, report the project name and ID, target Profile/environment, SOP mode, task count, Wiki count, and verification. For deletion, report the exact project name and ID, deletion time, actor, recoverable status, target, and verification. Never expose credentials or local token storage.
+For directory reads, report folder/project counts and the requested structured listing. For task lists, report the project identity, task count, and all nodes. For task detail, report the current status plus all returned history and related record groups. For task creation, report the task ID/title, exact project/node, target Profile/environment, owner, placement, resulting project version, and write-after-readback verification. For recoverable task deletion, report the exact project/task, dependency policy, `deletionId`, manifest, retention time, project version, target, and verification. For restoration, report the original task ID, deletion ID, warnings, project version, target, and verification. For project creation, report the project name and ID, target Profile/environment, SOP mode, task count, Wiki count, and verification. For project deletion, report the exact project name and ID, deletion time, actor, recoverable status, target, and verification. Never expose credentials or local token storage.
 
 After a reported execution failure, preserve the failed command, structured error code, and target metadata for a separately authorized plugin update. Runtime execution must not edit this Skill or its adapters.

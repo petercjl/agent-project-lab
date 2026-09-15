@@ -204,3 +204,19 @@ export async function removeFile(projectId: string, relative: string) {
     if (error.code !== "ENOENT") throw error;
   }
 }
+
+export async function moveFile(
+  projectId: string,
+  source: string,
+  destination: string,
+) {
+  const sourcePath = await safeFile(projectId, source);
+  const content = await fs.readFile(sourcePath);
+  await writeFile(projectId, destination, content);
+  await removeFile(projectId, source);
+  return {
+    source,
+    destination,
+    size: content.length,
+  };
+}

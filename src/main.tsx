@@ -345,17 +345,52 @@ function App() {
     );
   }
   async function deleteTask(taskToDelete: any) {
-    if (taskToDelete.contentStatus !== "empty") {
-      alert("该任务已有 Agent 执行记录或实质产出，不能删除。");
-      return;
-    }
-    if (!confirm(`确认删除空任务“${taskToDelete.title}”？`)) return;
-    await act(async () => {
-      await api(`/tasks/${taskToDelete.id}`, "DELETE", undefined, {
-        "idempotency-key": crypto.randomUUID(),
+    try {
+      const context = await api(
+        `/v1/projects/${taskToDelete.projectId}/tasks/${taskToDelete.id}/delete-context`,
+      );
+      if (
+        taskToDelete.contentStatus !== "empty" &&
+        !context.permissions.canDeleteWithContent
+      ) {
+        alert("该任务已有产出，请联系管理员执行可恢复删除。");
+        return;
+      }
+      let dependencyPolicy = "block";
+      if (context.impact.dependents.length) {
+        if (
+          !confirm(
+            `有 ${context.impact.dependents.length} 个下游任务依赖“${taskToDelete.title}”。是否解除这些依赖并继续预演？`,
+          )
+        )
+          return;
+        dependencyPolicy = "detach";
+      }
+      const preview = await api(
+        `/v1/projects/${taskToDelete.projectId}/tasks/${taskToDelete.id}/delete-preview`,
+        "POST",
+        { contextToken: context.contextToken, dependencyPolicy },
+      );
+      const summary = `将回收 Wiki/附件文件 ${preview.impact.files.filter((item: any) => !item.missing).length} 个，运行 ${preview.impact.records.runs} 条，活动记录 ${preview.impact.records.events} 条；保留 90 天。`;
+      const exact = prompt(`${summary}\n\n输入完整任务名称以确认可恢复删除：`);
+      if (exact !== taskToDelete.title) return;
+      await act(async () => {
+        await api(
+          `/v1/projects/${taskToDelete.projectId}/tasks/${taskToDelete.id}`,
+          "DELETE",
+          {
+            contextToken: context.contextToken,
+            impactHash: preview.impactHash,
+            confirmTask: exact,
+            dependencyPolicy,
+          },
+          { "idempotency-key": crypto.randomUUID() },
+        );
+        D(null);
       });
-      D(null);
-    });
+    } catch (error: any) {
+      E(error.message);
+    }
   }
   function orderedStageTasks(stage: string) {
     return tasks
@@ -2159,12 +2194,8 @@ function App() {
             </small>
             <button
               className="danger-outline delete-task"
-              disabled={busy || task.contentStatus !== "empty"}
-              title={
-                task.contentStatus === "empty"
-                  ? "删除这个空任务"
-                  : "已有 Agent 执行记录或实质产出的任务不能删除"
-              }
+              disabled={busy}
+              title="预演影响后执行可恢复删除"
               onClick={() => deleteTask(task)}
             >
               删除任务
