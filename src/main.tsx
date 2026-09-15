@@ -29,6 +29,10 @@ function App() {
     [folderOpen, FOLDER_OPEN] = useS(false),
     [folderName, FOLDER_NAME] = useS(""),
     [contextMenu, CONTEXT_MENU] = useS<any>(null),
+    [homeOpen, HOME_OPEN] = useS(true),
+    [homeView, HOME_VIEW] = useS(
+      localStorage.getItem("project-home-view") || "cards",
+    ),
     [sidebarCollapsed, SIDEBAR_COLLAPSED] = useS(
       localStorage.getItem("sidebar-collapsed") === "true",
     ),
@@ -114,6 +118,9 @@ function App() {
     localStorage.setItem("sidebar-width", String(sidebarWidth));
   }, [sidebarCollapsed, sidebarWidth]);
   useE(() => {
+    localStorage.setItem("project-home-view", homeView);
+  }, [homeView]);
+  useE(() => {
     if (!contextMenu) return;
     const close = () => CONTEXT_MENU(null);
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -175,6 +182,18 @@ function App() {
             : !project.folderId || !folderIds.has(project.folderId),
     ),
   })).filter((folder: any) => !folder.pinned || folder.projects.length > 0);
+  const projectProgress = (projectId: string) => {
+    const items =
+      s?.tasks.filter((item: any) => item.projectId === projectId) || [];
+    const completed = items.filter(
+      (item: any) => item.status === "已完成",
+    ).length;
+    return {
+      completed,
+      total: items.length,
+      percent: items.length ? Math.round((completed / items.length) * 100) : 0,
+    };
+  };
   const local = (v: string) =>
     v ? new Date(v).toLocaleString("zh-CN", { hour12: false }) : "—";
   const ready = (t: any) =>
@@ -186,6 +205,12 @@ function App() {
     if (dirty && !confirm("正文尚未保存，确认离开？")) return;
     DIR(false);
     T(t);
+  }
+  function openHome() {
+    if (dirty && !confirm("正文尚未保存，确认返回首页？")) return;
+    DIR(false);
+    D(null);
+    HOME_OPEN(true);
   }
   async function create() {
     if (projectType !== "product") return;
@@ -202,6 +227,7 @@ function App() {
         { "idempotency-key": crypto.randomUUID() },
       );
       P(result.project.id);
+      HOME_OPEN(false);
       T("看板");
       W("wiki/index.md");
       CREATE(false);
@@ -252,6 +278,13 @@ function App() {
         { "idempotency-key": crypto.randomUUID() },
       ),
     );
+  }
+  async function uploadProjectIcon(project: any, file: File) {
+    await act(async () => {
+      const body = new FormData();
+      body.append("file", file);
+      await api(`/v1/projects/${project.id}/icon`, "POST", body);
+    });
   }
   async function pinProject(project: any) {
     CONTEXT_MENU(null);
@@ -337,6 +370,7 @@ function App() {
   function selectProject(project: any) {
     if (dirty && !confirm("有未保存内容，确认切换？")) return;
     P(project.id);
+    HOME_OPEN(false);
     W("wiki/index.md");
     D(null);
     DIR(false);
@@ -469,6 +503,12 @@ function App() {
         <div className="side-label">
           工作空间 <span>{auth.mode === "dingtalk" ? "DINGTALK" : "DEV"}</span>
         </div>
+        <button
+          className={`home-link ${homeOpen ? "active" : ""}`}
+          onClick={openHome}
+        >
+          ⌂ <span>项目首页</span>
+        </button>
         <div className="project-create-actions">
           <button className="new-project" onClick={() => CREATE(true)}>
             ＋ 创建项目
@@ -594,6 +634,7 @@ function App() {
                     JSON.parse(await f.text()),
                   );
                   P(n.id);
+                  HOME_OPEN(false);
                 });
               e.target.value = "";
             }}
@@ -633,12 +674,20 @@ function App() {
       <main>
         <header>
           <div>
-            <span className="breadcrumb">工作空间 / 商品项目</span>
-            <h1>{p?.name || "开始你的第一个项目"}</h1>
-            <p>{p?.goal || "让 Agent 执行工作，让项目沉淀知识。"}</p>
+            <span className="breadcrumb">
+              {homeOpen ? "工作空间" : "工作空间 / 商品项目"}
+            </span>
+            <h1>
+              {homeOpen ? "项目首页" : p?.name || "开始你的第一个项目"}
+            </h1>
+            <p>
+              {homeOpen
+                ? `共 ${sortedProjects.length} 个项目，集中查看进度与最新动态。`
+                : p?.goal || "让 Agent 执行工作，让项目沉淀知识。"}
+            </p>
           </div>
           <div className="identity">
-            {p && (
+            {!homeOpen && p && (
               <button
                 className="danger-ghost"
                 onClick={() => {
@@ -687,7 +736,109 @@ function App() {
             <button onClick={() => E("")}>×</button>
           </div>
         )}
-        {!p ? (
+        {homeOpen ? (
+          <section className="project-home">
+            <div className="home-toolbar">
+              <div>
+                <b>全部项目</b>
+                <small>项目图片、时间和进度汇总</small>
+              </div>
+              <div className="view-switch" aria-label="首页视图">
+                <button
+                  className={homeView === "cards" ? "active" : ""}
+                  aria-label="卡片视图"
+                  onClick={() => HOME_VIEW("cards")}
+                >
+                  ▦ 卡片
+                </button>
+                <button
+                  className={homeView === "list" ? "active" : ""}
+                  aria-label="列表视图"
+                  onClick={() => HOME_VIEW("list")}
+                >
+                  ☷ 列表
+                </button>
+              </div>
+            </div>
+            {sortedProjects.length === 0 ? (
+              <div className="home-empty">
+                <div>◇</div>
+                <h2>还没有项目</h2>
+                <p>创建第一个商品项目，开始沉淀任务与知识。</p>
+                <button className="primary" onClick={() => CREATE(true)}>
+                  ＋ 创建项目
+                </button>
+              </div>
+            ) : (
+              <div className={`home-projects ${homeView}`}>
+                {sortedProjects.map((project: any) => {
+                  const progress = projectProgress(project.id);
+                  return (
+                    <article
+                      className="home-project"
+                      key={project.id}
+                      role="link"
+                      tabIndex={0}
+                      onClick={() => selectProject(project)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          selectProject(project);
+                        }
+                      }}
+                    >
+                      <div className="project-cover">
+                        {project.icon ? (
+                          <img
+                            src={`/api/v1/projects/${project.id}/icon?v=${encodeURIComponent(project.icon.updatedAt)}`}
+                            alt={`${project.name} 项目图片`}
+                          />
+                        ) : (
+                          <div className="project-cover-placeholder">
+                            {project.name.trim().slice(0, 1).toUpperCase() || "项"}
+                          </div>
+                        )}
+                        <label
+                          className="cover-upload"
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          {project.icon ? "更换图片" : "上传图片"}
+                          <input
+                            type="file"
+                            accept="image/png,image/jpeg,image/webp,image/gif"
+                            onChange={(event) => {
+                              const file = event.target.files?.[0];
+                              if (file) uploadProjectIcon(project, file);
+                              event.target.value = "";
+                            }}
+                          />
+                        </label>
+                      </div>
+                      <div className="home-project-info">
+                        <div className="home-project-title">
+                          <h2>{project.name}</h2>
+                          {project.pinned && <span>置顶</span>}
+                        </div>
+                        <p>{project.goal || "暂未填写项目目标"}</p>
+                        <div className="home-project-times">
+                          <span>创建 {local(project.createdAt)}</span>
+                          <span>更新 {local(project.updatedAt || project.createdAt)}</span>
+                        </div>
+                        <div className="home-progress-label">
+                          <span>项目进度</span>
+                          <b>
+                            {progress.percent}% · {progress.completed}/{progress.total}
+                          </b>
+                        </div>
+                        <progress value={progress.percent} max="100" />
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        ) : !p ? (
           <section className="welcome">
             <div className="hero-icon">◈</div>
             <h2>从一个商品，开始验证 AI 协作</h2>

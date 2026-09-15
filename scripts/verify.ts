@@ -103,6 +103,26 @@ try {
     "IDEMPOTENCY_CONFLICT",
   );
   checks++;
+  const iconBytes = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+    "base64",
+  );
+  const iconBody = new FormData();
+  iconBody.append("file", new Blob([iconBytes], { type: "image/png" }), "project.png");
+  const iconUpload = await fetch(base + `/v1/projects/${p.id}/icon`, {
+    method: "POST",
+    headers: { "x-actor": "agent", "idempotency-key": `icon-${Date.now()}` },
+    body: iconBody,
+  }).then((response) => response.json());
+  assert.equal(iconUpload.ok, true, JSON.stringify(iconUpload));
+  assert.equal(iconUpload.data.mimeType, "image/png");
+  const iconDownload = await fetch(base + `/v1/projects/${p.id}/icon`, {
+    headers: { "x-actor": "agent" },
+  });
+  assert.equal(iconDownload.status, 200);
+  assert.equal(iconDownload.headers.get("content-type"), "image/png");
+  assert.deepEqual(Buffer.from(await iconDownload.arrayBuffer()), iconBytes);
+  checks += 5;
   const folderName = `自动验收归档 ${key}`;
   const folder = await ok(
     "/project-folders",
@@ -521,6 +541,28 @@ try {
   const errors: string[] = [];
   pageUI.on("pageerror", (e) => errors.push(e.message));
   await pageUI.goto("http://127.0.0.1:4318");
+  await pageUI.getByRole("heading", { name: "项目首页", exact: true }).waitFor();
+  await pageUI.getByRole("button", { name: "卡片视图" }).waitFor();
+  const homeProject = pageUI
+    .locator(".home-project")
+    .filter({ has: pageUI.getByRole("heading", { name: p.name, exact: true }) });
+  await homeProject.getByText(/创建/).waitFor();
+  await homeProject.getByText(/更新/).waitFor();
+  await homeProject.getByText(/项目进度/).waitFor();
+  await homeProject.locator("img").waitFor();
+  assert.equal(
+    await homeProject.locator("img").evaluate((image: HTMLImageElement) => image.naturalWidth > 0),
+    true,
+  );
+  await pageUI.getByRole("button", { name: "列表视图" }).click();
+  assert.equal(await pageUI.locator(".home-projects.list").count(), 1);
+  await pageUI.getByRole("button", { name: "卡片视图" }).click();
+  await fs.mkdir("test-results", { recursive: true });
+  await pageUI.screenshot({
+    path: "test-results/verification-home.png",
+    fullPage: true,
+  });
+  checks += 8;
   const projectButton = pageUI.getByRole("button", {
     name: "▣ " + p.name,
     exact: true,
@@ -743,6 +785,7 @@ try {
           "test-results/verification-board.png",
           "test-results/verification-mobile.png",
           "test-results/verification-context-menu.png",
+          "test-results/verification-home.png",
         ],
       },
       null,

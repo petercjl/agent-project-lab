@@ -177,6 +177,25 @@ aside {
   padding: 1px 4px;
   border-radius: 3px;
 }
+.home-link {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 2px;
+  padding: 9px 10px;
+  border-color: transparent;
+  background: transparent;
+  color: #aebed2;
+  text-align: left;
+  font-size: 11px;
+}
+.home-link:hover,
+.home-link.active {
+  border-color: #3a557a;
+  background: #263e5e;
+  color: #fff;
+}
 .project-create-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -454,6 +473,16 @@ main {
   content: "□";
   font-size: 18px;
 }
+.app.sidebar-collapsed .home-link {
+  width: 44px;
+  justify-content: center;
+  margin: 4px 2px;
+  padding: 10px 0;
+  font-size: 17px;
+}
+.app.sidebar-collapsed .home-link span {
+  display: none;
+}
 .app.sidebar-collapsed .sidebar-resizer {
   display: none;
 }
@@ -468,6 +497,222 @@ header p {
   color: #8090a5;
   font-size: 12px;
   margin: 0;
+}
+.project-home {
+  min-height: calc(100vh - 132px);
+  padding: 28px 32px 48px;
+}
+.home-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+.home-toolbar > div:first-child {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+.home-toolbar b {
+  font-size: 14px;
+}
+.home-toolbar small {
+  color: #91a0b3;
+}
+.view-switch {
+  display: inline-flex;
+  padding: 3px;
+  border: 1px solid #dfe4eb;
+  border-radius: 8px;
+  background: #fff;
+}
+.view-switch button {
+  padding: 6px 10px;
+  border: 0;
+  background: transparent;
+  font-size: 11px;
+}
+.view-switch button.active {
+  background: #e9f0fb;
+  color: #2f69bb;
+}
+.home-projects.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 18px;
+}
+.home-project {
+  overflow: hidden;
+  border: 1px solid #e0e6ee;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 3px 12px rgb(31 48 71 / 4%);
+  cursor: pointer;
+  transition: border-color 140ms ease, box-shadow 140ms ease,
+    transform 140ms ease;
+}
+.home-project:hover,
+.home-project:focus-visible {
+  border-color: #a9c2e7;
+  box-shadow: 0 10px 28px rgb(38 66 103 / 12%);
+  outline: none;
+  transform: translateY(-2px);
+}
+.project-cover {
+  position: relative;
+  height: 154px;
+  overflow: hidden;
+  background: #e9eef5;
+}
+.project-cover img,
+.project-cover-placeholder {
+  width: 100%;
+  height: 100%;
+}
+.project-cover img {
+  display: block;
+  object-fit: cover;
+}
+.project-cover-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #dbe9f6, #edf2f8 55%, #d8e3ef);
+  color: #6d88a8;
+  font-size: 52px;
+  font-weight: 650;
+}
+.cover-upload {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  padding: 6px 9px;
+  border: 1px solid rgb(255 255 255 / 55%);
+  border-radius: 6px;
+  background: rgb(20 37 60 / 76%);
+  color: #fff;
+  cursor: pointer;
+  font-size: 10px;
+  opacity: 0;
+  transition: opacity 120ms ease, background 120ms ease;
+}
+.project-cover:hover .cover-upload,
+.cover-upload:focus-within {
+  opacity: 1;
+}
+.cover-upload:hover {
+  background: rgb(20 37 60 / 92%);
+}
+.cover-upload input {
+  display: none;
+}
+.home-project-info {
+  padding: 17px 18px 18px;
+}
+.home-project-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.home-project-title h2 {
+  overflow: hidden;
+  flex: 1;
+  margin: 0;
+  font-size: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.home-project-title span {
+  padding: 2px 6px;
+  border-radius: 8px;
+  background: #fff0d6;
+  color: #a87523;
+  font-size: 9px;
+}
+.home-project-info > p {
+  overflow: hidden;
+  height: 34px;
+  margin: 9px 0 13px;
+  color: #8492a5;
+  font-size: 11px;
+  line-height: 1.55;
+}
+.home-project-times {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 13px;
+  margin-bottom: 15px;
+  color: #9ba7b5;
+  font-size: 9px;
+}
+.home-progress-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #78889c;
+  font-size: 10px;
+}
+.home-progress-label b {
+  color: #536780;
+  font-weight: 600;
+}
+.home-project-info progress {
+  height: 6px;
+  margin-top: 7px;
+}
+.home-projects.list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.home-projects.list .home-project {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+}
+.home-projects.list .project-cover {
+  height: 132px;
+}
+.home-projects.list .home-project-info {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.4fr) minmax(200px, 1fr);
+  column-gap: 24px;
+  align-content: center;
+}
+.home-projects.list .home-project-title,
+.home-projects.list .home-project-info > p,
+.home-projects.list .home-project-times {
+  grid-column: 1;
+}
+.home-projects.list .home-project-info > p {
+  margin-bottom: 6px;
+}
+.home-projects.list .home-project-times {
+  margin-bottom: 0;
+}
+.home-projects.list .home-progress-label,
+.home-projects.list progress {
+  grid-column: 2;
+}
+.home-projects.list .home-progress-label {
+  grid-row: 1;
+  align-self: end;
+}
+.home-projects.list progress {
+  grid-row: 2;
+  align-self: start;
+}
+.home-empty {
+  padding: 90px 20px;
+  border: 1px dashed #dce3ec;
+  border-radius: 12px;
+  background: #fff;
+  color: #8190a4;
+  text-align: center;
+}
+.home-empty > div {
+  margin-bottom: 12px;
+  color: #80a6c4;
+  font-size: 48px;
 }
 .breadcrumb {
   font-size: 11px;
@@ -1301,6 +1546,17 @@ button.danger:hover {
   .content {
     padding: 20px;
   }
+  .project-home {
+    padding: 22px 20px 40px;
+  }
+  .home-projects.list .home-project-info {
+    grid-template-columns: 1fr;
+  }
+  .home-projects.list .home-progress-label,
+  .home-projects.list progress {
+    grid-column: 1;
+    grid-row: auto;
+  }
 }
 @media (max-width: 600px) {
   .project-context-menu {
@@ -1383,6 +1639,23 @@ button.danger:hover {
   }
   .identity button {
     display: none;
+  }
+  .home-toolbar {
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .home-toolbar > div:first-child {
+    flex-direction: column;
+    gap: 4px;
+  }
+  .home-projects.list .home-project {
+    display: block;
+  }
+  .home-projects.list .project-cover {
+    height: 145px;
+  }
+  .cover-upload {
+    opacity: 1;
   }
   nav .export {
     display: none;

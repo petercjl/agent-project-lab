@@ -143,6 +143,7 @@ route("get", "/api/capabilities", () => ({
     "project.folder.move",
     "project.directory.reorder",
     "project.pin",
+    "project.icon.upload",
     "project.delete",
     "project.export",
     "project.restore",
@@ -697,6 +698,79 @@ route("get", "/api/projects/:id/search", async (req: any) => {
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 20 * 1024 * 1024 },
+});
+const projectImageUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 8 * 1024 * 1024 },
+});
+const imageType = (buffer: Buffer) => {
+  if (
+    buffer.length >= 8 &&
+    buffer.subarray(0, 8).equals(Buffer.from("89504e470d0a1a0a", "hex"))
+  )
+    return { extension: "png", mimeType: "image/png" };
+  if (buffer.length >= 3 && buffer.subarray(0, 3).equals(Buffer.from("ffd8ff", "hex")))
+    return { extension: "jpg", mimeType: "image/jpeg" };
+  if (
+    buffer.length >= 12 &&
+    buffer.subarray(0, 4).toString("ascii") === "RIFF" &&
+    buffer.subarray(8, 12).toString("ascii") === "WEBP"
+  )
+    return { extension: "webp", mimeType: "image/webp" };
+  if (
+    buffer.length >= 6 &&
+    ["GIF87a", "GIF89a"].includes(buffer.subarray(0, 6).toString("ascii"))
+  )
+    return { extension: "gif", mimeType: "image/gif" };
+  throw new Fault("INVALID_IMAGE", "仅支持 PNG、JPEG、WebP 或 GIF 图片", 415);
+};
+app.post(
+  "/api/v1/projects/:id/icon",
+  projectImageUpload.single("file"),
+  async (req: any, res, next) => {
+    try {
+      if (!req.file) throw new Fault("VALIDATION", "请选择项目图片");
+      const type = imageType(req.file.buffer);
+      const result = await mutate(req, async (s: any, who: string) => {
+        const project = activeProject(s.projects, req.params.id);
+        const icon = {
+          path: `project-assets/icon-${uid()}.${type.extension}`,
+          mimeType: type.mimeType,
+          size: req.file.size,
+          sha256: createHash("sha256").update(req.file.buffer).digest("hex"),
+          updatedAt: now(),
+        };
+        await writeFile(project.id, icon.path, req.file.buffer);
+        project.icon = icon;
+        audit(s, who, "project.icon.updated", project.id, {
+          size: icon.size,
+          mimeType: icon.mimeType,
+          sha256: icon.sha256,
+          source: requestSource(req),
+        });
+        return icon;
+      });
+      res.json({ ok: true, data: result });
+    } catch (e) {
+      next(e);
+    }
+  },
+);
+app.get("/api/v1/projects/:id/icon", async (req, res, next) => {
+  try {
+    const s: any = await read();
+    const project = activeProject(s.projects, req.params.id);
+    if (!project.icon?.path)
+      throw new Fault("NOT_FOUND", "项目图片不存在", 404);
+    const content = await fs.readFile(await safeFile(project.id, project.icon.path));
+    if (createHash("sha256").update(content).digest("hex") !== project.icon.sha256)
+      throw new Fault("FILE_INTEGRITY", "项目图片校验失败", 409);
+    res.setHeader("Content-Type", project.icon.mimeType);
+    res.setHeader("Cache-Control", "private, max-age=300");
+    res.send(content);
+  } catch (e) {
+    next(e);
+  }
 });
 app.post(
   "/api/tasks/:id/artifacts",
