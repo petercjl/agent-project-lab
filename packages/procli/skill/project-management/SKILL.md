@@ -1,6 +1,6 @@
 ---
 name: project-management
-description: Read and operate projects through procli, including directory/project listing, task-node listing and record inspection, product-project creation, administrator deletion, and local/NAS target selection. Always use when the user explicitly says "procli" or asks to use procli.
+description: Read and operate projects through procli, including natural-language project/task matching, directory and task inspection, project creation, administrator deletion, and local/NAS target selection. Invoke this Skill only when the user's request explicitly contains the keyword "procli" or explicitly asks to use procli.
 ---
 
 # Project Management
@@ -13,8 +13,8 @@ The logical capabilities are `project.service.directory.list`, `project.service.
 
 ## Contract
 
-- Input: a directory-list intent, or an exact project name and optionally an exact task-node name; write operations retain their existing authorization inputs.
-- Strategy: select the requested Profile, verify the target, execute the matching structured procli command, and distinguish missing or ambiguous names from empty results.
+- Input: an explicit `procli` trigger plus a project-management intent. Project, folder, stage, skill, and task references may be natural-language fragments rather than exact stored names; write operations retain their existing authorization inputs.
+- Strategy: select the requested Profile, verify the target, use read-only procli listings to resolve natural-language references to exact stored names, communicate the resolution or ambiguity, then execute the matching structured procli command.
 - Output: report the selected target and the CLI's structured project/task data. Read paths must not use write flags, idempotency keys, direct service APIs, or mutate project state.
 
 ## Target routing
@@ -54,6 +54,22 @@ These commands are read-only and do not require write confirmation. Use `--profi
   ```
 
   Report the full current task, resolved dependencies and dependents, status history, activity events, Agent runs, artifact metadata, Wiki metadata, and notifications. Do not describe an absent record collection as an error; preserve it as an empty array or `null` according to the CLI result.
+
+### Resolve natural-language references
+
+The CLI accepts exact names, while the Skill accepts the shorter and less formal expressions people normally use. Resolve them only through current read-only procli results; never inspect the service database or project files directly.
+
+1. Run `procli directory list --json` and normalize the user's reference for Unicode form, whitespace, case, and ordinary punctuation.
+2. Resolve the project context in this order:
+   - exact active-project name;
+   - exact folder name, using the folder's `projectIds` to obtain its projects;
+   - a unique clear containment match against active project and folder names.
+3. If a folder resolves to exactly one project, use that project. If several projects remain plausible, show their exact names and ask one concise clarification question. Do not select by directory order or recency.
+4. Run `procli task list --project "<exact project name>" --json`. Match the user's task phrase against each node's `title`, `stage`, and `skill`, preferring an exact field match and then a unique clear containment match.
+5. If exactly one task remains, use its exact `title` with `procli task get`. If zero or several remain, show the closest exact task titles with their current statuses and ask the user to clarify. Never silently substitute a merely similar task.
+6. In the result, briefly state the resolved folder/project/task mapping before reporting the requested status and records. A unique high-confidence mapping does not require an extra confirmation turn.
+
+For example, a request about a folder followed by a short task topic can be resolved by composing `directory list`, `task list`, and `task get`; do not pass the folder name or short topic directly into an exact-name CLI argument.
 
 ## Create a product project
 
@@ -105,6 +121,7 @@ Deletion is a recoverable soft delete, but it is a high-risk administrator actio
 - `SERVICE_UNAVAILABLE`: report the selected Profile and stop without changing environments.
 - `NOT_FOUND` on a read: state whether the project or task was not found and request an exact name; do not substitute a similar item.
 - `TASK_NAME_AMBIGUOUS`: report the conflicting task IDs and ask the user to disambiguate; do not choose one silently.
+- Multiple natural-language candidates: report the exact candidate names and current statuses when available, ask one concise clarification question, and return to the relevant resolution step after the user answers.
 - Unknown write result: retry only with the same idempotency key.
 
 ## Output contract

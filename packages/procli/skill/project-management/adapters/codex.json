@@ -61,7 +61,7 @@
       "implementation": {
         "kind": "stable-cli",
         "discovery": "Resolve procli from PATH and verify it with procli version and procli capabilities --json.",
-        "execution": "Run procli task get with exact project and task names.",
+        "execution": "Compose procli directory list and task list to resolve natural-language folder, project, stage, skill, and task references; clarify non-unique candidates; then run procli task get with the resolved exact project and task names.",
         "normalization": "Use the procli JSON envelope without reinterpretation."
       },
       "features": [
@@ -70,6 +70,10 @@
         "read_only",
         "exact_project_name_resolution",
         "exact_task_name_resolution",
+        "natural_language_project_resolution",
+        "folder_as_project_context",
+        "natural_language_task_resolution",
+        "ambiguity_clarification",
         "status_history",
         "related_records",
         "structured_json"

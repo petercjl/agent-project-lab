@@ -55,6 +55,10 @@
         "read_only",
         "exact_project_name_resolution",
         "exact_task_name_resolution",
+        "natural_language_project_resolution",
+        "folder_as_project_context",
+        "natural_language_task_resolution",
+        "ambiguity_clarification",
         "status_history",
         "related_records",
         "structured_json"
