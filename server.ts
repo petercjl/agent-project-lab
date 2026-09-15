@@ -50,6 +50,19 @@ const activeProject = (projects: any[], id: string) => {
   if (project.deletedAt) throw new Fault("NOT_FOUND", "项目不存在", 404);
   return project;
 };
+const activeProjectByName = (projects: any[], name: any) => {
+  const key = projectNameKey(name);
+  const project = projects.find(
+    (item: any) => !item.deletedAt && projectNameKey(item.name) === key,
+  );
+  if (!project) throw new Fault("NOT_FOUND", "项目不存在", 404);
+  return project;
+};
+const taskNameKey = (value: any) =>
+  required(value, "任务节点")
+    .normalize("NFKC")
+    .replace(/\s+/g, " ")
+    .toLocaleLowerCase("zh-CN");
 const requireAdmin = (req: any) => {
   if (req.auth?.systemRole !== "admin")
     throw new Fault(
@@ -138,6 +151,9 @@ route("get", "/api/state", async () => {
 route("get", "/api/capabilities", () => ({
   version: "1",
   actions: [
+    "directory.list",
+    "project.task.list",
+    "project.task.read",
     "project.create",
     "project.folder.create",
     "project.folder.move",
@@ -324,12 +340,32 @@ route("put", "/api/project-directory/order", (req) =>
     const exactIds = (actual: any[], expected: string[]) =>
       actual.length === expected.length &&
       new Set(actual).size === actual.length &&
-      actual.every((id: any) => typeof id === "string" && expected.includes(id));
-    if (!exactIds(folderIds, s.folders.map((folder: any) => folder.id)))
-      throw new Fault("DIRECTORY_CONFLICT", "目录清单已变化，请刷新后重试", 409);
+      actual.every(
+        (id: any) => typeof id === "string" && expected.includes(id),
+      );
+    if (
+      !exactIds(
+        folderIds,
+        s.folders.map((folder: any) => folder.id),
+      )
+    )
+      throw new Fault(
+        "DIRECTORY_CONFLICT",
+        "目录清单已变化，请刷新后重试",
+        409,
+      );
     const projectIds = layout.map((item: any) => item?.id);
-    if (!exactIds(projectIds, activeProjects.map((project: any) => project.id)))
-      throw new Fault("DIRECTORY_CONFLICT", "项目清单已变化，请刷新后重试", 409);
+    if (
+      !exactIds(
+        projectIds,
+        activeProjects.map((project: any) => project.id),
+      )
+    )
+      throw new Fault(
+        "DIRECTORY_CONFLICT",
+        "项目清单已变化，请刷新后重试",
+        409,
+      );
     folderIds.forEach((id: string, index: number) => {
       const folder = s.folders.find((item: any) => item.id === id);
       folder.directoryOrder = index;
@@ -356,6 +392,70 @@ route("put", "/api/project-directory/order", (req) =>
     return { folders: s.folders, projects: activeProjects };
   }),
 );
+route("get", "/api/v1/directory", async () => {
+  const s: any = await read();
+  const folders = [...(s.folders || [])].sort(
+    (a: any, b: any) =>
+      (a.directoryOrder ?? Number.MAX_SAFE_INTEGER) -
+      (b.directoryOrder ?? Number.MAX_SAFE_INTEGER),
+  );
+  const projects = s.projects
+    .filter((project: any) => !project.deletedAt)
+    .sort(
+      (a: any, b: any) =>
+        (a.directoryOrder ?? Number.MAX_SAFE_INTEGER) -
+        (b.directoryOrder ?? Number.MAX_SAFE_INTEGER),
+    )
+    .map((project: any) => {
+      const tasks = s.tasks.filter(
+        (task: any) => task.projectId === project.id,
+      );
+      const completedTasks = tasks.filter(
+        (task: any) => task.status === "已完成",
+      ).length;
+      return {
+        id: project.id,
+        name: project.name,
+        type: project.type,
+        status: project.status,
+        goal: project.goal,
+        folderId: project.folderId || null,
+        folderName:
+          folders.find((folder: any) => folder.id === project.folderId)?.name ||
+          null,
+        pinned: Boolean(project.pinned),
+        directoryOrder: project.directoryOrder ?? null,
+        createdAt: project.createdAt,
+        updatedAt: project.updatedAt || project.createdAt,
+        taskCount: tasks.length,
+        completedTaskCount: completedTasks,
+        progress: tasks.length
+          ? Math.round((completedTasks / tasks.length) * 100)
+          : 0,
+      };
+    });
+  return {
+    counts: {
+      folders: folders.length,
+      projects: projects.length,
+      pinnedProjects: projects.filter((project: any) => project.pinned).length,
+      unfiledProjects: projects.filter(
+        (project: any) => !project.pinned && !project.folderId,
+      ).length,
+    },
+    folders: folders.map((folder: any) => ({
+      id: folder.id,
+      name: folder.name,
+      directoryOrder: folder.directoryOrder ?? null,
+      createdAt: folder.createdAt,
+      updatedAt: folder.updatedAt,
+      projectIds: projects
+        .filter((project: any) => project.folderId === folder.id)
+        .map((project: any) => project.id),
+    })),
+    projects,
+  };
+});
 async function createProjectRequest(req: any, detailed = false) {
   if (
     req.body.template &&
@@ -451,11 +551,7 @@ route("get", "/api/v1/projects/:id", async (req) => {
 });
 route("get", "/api/v1/projects/resolve/by-name", async (req) => {
   const s: any = await read();
-  const key = projectNameKey(req.query.name);
-  const project = s.projects.find(
-    (item: any) => !item.deletedAt && projectNameKey(item.name) === key,
-  );
-  if (!project) throw new Fault("NOT_FOUND", "项目不存在", 404);
+  const project = activeProjectByName(s.projects, req.query.name);
   return {
     project,
     taskCount: s.tasks.filter((item: any) => item.projectId === project.id)
@@ -524,6 +620,109 @@ route("post", "/api/members", (req) =>
     return m;
   }),
 );
+route("get", "/api/v1/projects/:id/tasks", async (req) => {
+  const s: any = await read();
+  const project = activeProject(s.projects, req.params.id);
+  const tasks = s.tasks.filter((task: any) => task.projectId === project.id);
+  return {
+    project: {
+      id: project.id,
+      name: project.name,
+      type: project.type,
+      status: project.status,
+      createdAt: project.createdAt,
+      updatedAt: project.updatedAt || project.createdAt,
+    },
+    count: tasks.length,
+    tasks: tasks.map((task: any) => ({
+      ...task,
+      dependencyStates: task.dependencies.map((id: string) => {
+        const dependency = tasks.find((item: any) => item.id === id);
+        return dependency
+          ? {
+              id: dependency.id,
+              title: dependency.title,
+              status: dependency.status,
+            }
+          : { id, missing: true };
+      }),
+    })),
+  };
+});
+route("get", "/api/v1/projects/:id/tasks/resolve/by-name", async (req) => {
+  const s: any = await read();
+  const project = activeProject(s.projects, req.params.id);
+  const key = taskNameKey(req.query.name);
+  const projectTasks = s.tasks.filter(
+    (task: any) => task.projectId === project.id,
+  );
+  const matches = projectTasks.filter(
+    (task: any) => taskNameKey(task.title) === key,
+  );
+  if (!matches.length) throw new Fault("NOT_FOUND", "任务节点不存在", 404);
+  if (matches.length > 1)
+    throw new Fault(
+      "TASK_NAME_AMBIGUOUS",
+      `任务节点名称不唯一，匹配到 ${matches.length} 条记录：${matches
+        .map((task: any) => task.id)
+        .join("、")}`,
+      409,
+    );
+  const task = matches[0];
+  const relatedEvents = s.events
+    .filter((event: any) => event.details?.taskId === task.id)
+    .sort((a: any, b: any) => a.createdAt.localeCompare(b.createdAt));
+  return {
+    project: { id: project.id, name: project.name },
+    task,
+    dependencies: task.dependencies.map((id: string) => {
+      const dependency = projectTasks.find((item: any) => item.id === id);
+      return dependency
+        ? {
+            id: dependency.id,
+            title: dependency.title,
+            status: dependency.status,
+          }
+        : { id, missing: true };
+    }),
+    dependents: projectTasks
+      .filter((item: any) => item.dependencies.includes(task.id))
+      .map((item: any) => ({
+        id: item.id,
+        title: item.title,
+        status: item.status,
+      })),
+    statusHistory: relatedEvents
+      .filter(
+        (event: any) =>
+          event.details?.before?.status || event.details?.after?.status,
+      )
+      .map((event: any) => ({
+        eventId: event.id,
+        action: event.type,
+        actor: event.actor,
+        from: event.details?.before?.status || null,
+        to: event.details?.after?.status || null,
+        reason: event.details?.reason || null,
+        createdAt: event.createdAt,
+      })),
+    records: {
+      events: relatedEvents,
+      runs: s.runs.filter((run: any) => run.taskId === task.id),
+      artifacts: s.artifacts
+        .filter((artifact: any) => artifact.taskId === task.id)
+        .map(({ path: _path, ...artifact }: any) => artifact),
+      wiki:
+        s.pages.find(
+          (page: any) =>
+            page.projectId === project.id && page.path === task.wikiPath,
+        ) || null,
+      notifications: s.notifications.filter(
+        (notification: any) => notification.taskId === task.id,
+      ),
+    },
+  };
+});
 route("post", "/api/tasks", (req) =>
   mutate(req, (s: any, who: string) => {
     const p = activeProject(s.projects, req.body.projectId);
@@ -709,7 +908,10 @@ const imageType = (buffer: Buffer) => {
     buffer.subarray(0, 8).equals(Buffer.from("89504e470d0a1a0a", "hex"))
   )
     return { extension: "png", mimeType: "image/png" };
-  if (buffer.length >= 3 && buffer.subarray(0, 3).equals(Buffer.from("ffd8ff", "hex")))
+  if (
+    buffer.length >= 3 &&
+    buffer.subarray(0, 3).equals(Buffer.from("ffd8ff", "hex"))
+  )
     return { extension: "jpg", mimeType: "image/jpeg" };
   if (
     buffer.length >= 12 &&
@@ -762,8 +964,12 @@ app.get("/api/v1/projects/:id/icon", async (req, res, next) => {
     const project = activeProject(s.projects, req.params.id);
     if (!project.icon?.path)
       throw new Fault("NOT_FOUND", "项目图片不存在", 404);
-    const content = await fs.readFile(await safeFile(project.id, project.icon.path));
-    if (createHash("sha256").update(content).digest("hex") !== project.icon.sha256)
+    const content = await fs.readFile(
+      await safeFile(project.id, project.icon.path),
+    );
+    if (
+      createHash("sha256").update(content).digest("hex") !== project.icon.sha256
+    )
       throw new Fault("FILE_INTEGRITY", "项目图片校验失败", 409);
     res.setHeader("Content-Type", project.icon.mimeType);
     res.setHeader("Cache-Control", "private, max-age=300");

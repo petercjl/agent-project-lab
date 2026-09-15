@@ -1,9 +1,47 @@
 {
   "schemaVersion": "1",
   "name": "procli",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "defaultProfile": "nas",
   "capabilities": [
+    {
+      "id": "directory.list",
+      "command": "procli directory list",
+      "effect": "read",
+      "risk": "low",
+      "requiredInputs": [],
+      "optionalInputs": ["profile"],
+      "supports": ["targetVerification", "structuredJson"]
+    },
+    {
+      "id": "task.list",
+      "command": "procli task list",
+      "effect": "read",
+      "risk": "low",
+      "requiredInputs": ["project"],
+      "optionalInputs": ["profile"],
+      "supports": [
+        "projectNameResolution",
+        "targetVerification",
+        "structuredJson"
+      ]
+    },
+    {
+      "id": "task.get",
+      "command": "procli task get",
+      "effect": "read",
+      "risk": "low",
+      "requiredInputs": ["project", "task"],
+      "optionalInputs": ["profile"],
+      "supports": [
+        "projectNameResolution",
+        "taskNameResolution",
+        "statusHistory",
+        "relatedRecords",
+        "targetVerification",
+        "structuredJson"
+      ]
+    },
     {
       "id": "project.create",
       "command": "procli project create",

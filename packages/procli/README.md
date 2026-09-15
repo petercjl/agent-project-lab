@@ -23,6 +23,16 @@ procli --profile nas project create --name "NAS 测试项目" --goal "验证最�
 procli project create --name "新品项目" --goal "完成市场验证与上市" --yes
 ```
 
+只读命令可直接查询目录、项目和任务记录：
+
+```bash
+procli directory list
+procli task list --project "新品项目"
+procli task get --project "新品项目" --task "完成市场与竞品调研"
+```
+
+`task get` 返回节点当前状态、状态历史、依赖、活动记录、Agent 运行、交付物、Wiki 元数据和通知。
+
 商品项目默认生成标准生命周期 SOP。Agent 也可以提交自定义 SOP；每个节点都必须有名称和工作说明：
 
 ```json

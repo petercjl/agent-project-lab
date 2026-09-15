@@ -5,6 +5,83 @@
   "target_platforms": ["codex", "sealseek"],
   "capabilities": [
     {
+      "id": "project.service.directory.list",
+      "purpose": "Read the complete folder and active-project directory from the selected service",
+      "required": true,
+      "required_features": [
+        "profile_selection",
+        "target_identity_verification",
+        "read_only",
+        "folder_project_relationships",
+        "structured_json"
+      ],
+      "input_fields": ["profile"],
+      "output_fields": ["target", "counts", "folders", "projects"],
+      "side_effects": {
+        "external_mutation": false,
+        "may_cost_money": false,
+        "authorization": "The authenticated user may read the shared company project directory."
+      },
+      "errors": ["AUTH_REQUIRED", "NOT_FOUND", "PROVIDER_FAILURE"]
+    },
+    {
+      "id": "project.service.task.list",
+      "purpose": "Resolve one project by exact name and read all of its task nodes",
+      "required": true,
+      "required_features": [
+        "profile_selection",
+        "target_identity_verification",
+        "read_only",
+        "exact_project_name_resolution",
+        "complete_task_nodes",
+        "structured_json"
+      ],
+      "input_fields": ["profile", "project"],
+      "output_fields": ["target", "project", "count", "tasks"],
+      "side_effects": {
+        "external_mutation": false,
+        "may_cost_money": false,
+        "authorization": "The authenticated user may read tasks in a visible company project."
+      },
+      "errors": ["AUTH_REQUIRED", "NOT_FOUND", "PROVIDER_FAILURE"]
+    },
+    {
+      "id": "project.service.task.read",
+      "purpose": "Resolve one project and task node by exact name and read its full state and related records",
+      "required": true,
+      "required_features": [
+        "profile_selection",
+        "target_identity_verification",
+        "read_only",
+        "exact_project_name_resolution",
+        "exact_task_name_resolution",
+        "status_history",
+        "related_records",
+        "structured_json"
+      ],
+      "input_fields": ["profile", "project", "task"],
+      "output_fields": [
+        "target",
+        "project",
+        "task",
+        "dependencies",
+        "dependents",
+        "status_history",
+        "records"
+      ],
+      "side_effects": {
+        "external_mutation": false,
+        "may_cost_money": false,
+        "authorization": "The authenticated user may read task state and records in a visible company project."
+      },
+      "errors": [
+        "AUTH_REQUIRED",
+        "NOT_FOUND",
+        "TASK_NAME_AMBIGUOUS",
+        "PROVIDER_FAILURE"
+      ]
+    },
+    {
       "id": "project.service.project.create",
       "purpose": "Create one project in the selected project-management service and verify its generated structure",
       "required": true,

@@ -108,7 +108,11 @@ try {
     "base64",
   );
   const iconBody = new FormData();
-  iconBody.append("file", new Blob([iconBytes], { type: "image/png" }), "project.png");
+  iconBody.append(
+    "file",
+    new Blob([iconBytes], { type: "image/png" }),
+    "project.png",
+  );
   const iconUpload = await fetch(base + `/v1/projects/${p.id}/icon`, {
     method: "POST",
     headers: { "x-actor": "agent", "idempotency-key": `icon-${Date.now()}` },
@@ -206,7 +210,10 @@ try {
     s.folders.find((item: any) => item.id === folderOrder[0]).directoryOrder,
     0,
   );
-  assert.equal(s.projects.find((item: any) => item.id === p.id).directoryOrder, 0);
+  assert.equal(
+    s.projects.find((item: any) => item.id === p.id).directoryOrder,
+    0,
+  );
   checks += 2;
   assert.equal(
     s.folders.some((item: any) => item.id === folder.id),
@@ -327,6 +334,27 @@ try {
     ),
   );
   checks++;
+  const directoryRead = await ok("/v1/directory");
+  assert.equal(
+    directoryRead.projects.some((project: any) => project.id === p.id),
+    true,
+  );
+  assert.equal(
+    directoryRead.folders.some((item: any) => item.id === folder.id),
+    true,
+  );
+  const taskListRead = await ok(`/v1/projects/${p.id}/tasks`);
+  assert.equal(taskListRead.count, 7);
+  assert.equal(taskListRead.tasks[0].id, t.id);
+  const taskDetailRead = await ok(
+    `/v1/projects/${p.id}/tasks/resolve/by-name?name=${encodeURIComponent(t.title)}`,
+  );
+  assert.equal(taskDetailRead.task.status, "已完成");
+  assert.equal(taskDetailRead.statusHistory.at(-1).to, "已完成");
+  assert.equal(taskDetailRead.records.runs[0].status, "completed");
+  assert.equal(taskDetailRead.records.artifacts[0].name, "test.txt");
+  assert.equal(taskDetailRead.records.wiki.version, 3);
+  checks += 9;
   assert.equal(
     (
       await api(`/tasks/${next.id}`, "PATCH", {
@@ -384,6 +412,70 @@ try {
       env: { ...process.env, PROCLI_CONFIG_PATH: procliConfig },
     },
   );
+  const revisionBeforeCliReads = (await ok("/state")).revision;
+  const cliDirectory = JSON.parse(
+    execFileSync(
+      process.execPath,
+      [
+        "packages/procli/bin/procli.mjs",
+        "--profile",
+        "local",
+        "directory",
+        "list",
+      ],
+      {
+        encoding: "utf8",
+        env: { ...process.env, PROCLI_CONFIG_PATH: procliConfig },
+      },
+    ),
+  );
+  assert.equal(
+    cliDirectory.data.projects.some((project: any) => project.id === p.id),
+    true,
+  );
+  const cliTaskList = JSON.parse(
+    execFileSync(
+      process.execPath,
+      [
+        "packages/procli/bin/procli.mjs",
+        "--profile",
+        "local",
+        "task",
+        "list",
+        "--project",
+        p.name,
+      ],
+      {
+        encoding: "utf8",
+        env: { ...process.env, PROCLI_CONFIG_PATH: procliConfig },
+      },
+    ),
+  );
+  assert.equal(cliTaskList.data.count, 7);
+  const cliTaskDetail = JSON.parse(
+    execFileSync(
+      process.execPath,
+      [
+        "packages/procli/bin/procli.mjs",
+        "--profile",
+        "local",
+        "task",
+        "get",
+        "--project",
+        p.name,
+        "--task",
+        t.title,
+      ],
+      {
+        encoding: "utf8",
+        env: { ...process.env, PROCLI_CONFIG_PATH: procliConfig },
+      },
+    ),
+  );
+  assert.equal(cliTaskDetail.data.task.id, t.id);
+  assert.equal(cliTaskDetail.data.records.runs[0].status, "completed");
+  assert.equal((await ok("/state")).revision, revisionBeforeCliReads);
+  checks += 5;
   const dry = JSON.parse(
     execFileSync(
       process.execPath,
@@ -541,17 +633,23 @@ try {
   const errors: string[] = [];
   pageUI.on("pageerror", (e) => errors.push(e.message));
   await pageUI.goto("http://127.0.0.1:4318");
-  await pageUI.getByRole("heading", { name: "项目首页", exact: true }).waitFor();
+  await pageUI
+    .getByRole("heading", { name: "项目首页", exact: true })
+    .waitFor();
   await pageUI.getByRole("button", { name: "卡片视图" }).waitFor();
   const homeProject = pageUI
     .locator(".home-project")
-    .filter({ has: pageUI.getByRole("heading", { name: p.name, exact: true }) });
+    .filter({
+      has: pageUI.getByRole("heading", { name: p.name, exact: true }),
+    });
   await homeProject.getByText(/创建/).waitFor();
   await homeProject.getByText(/更新/).waitFor();
   await homeProject.getByText(/项目进度/).waitFor();
   await homeProject.locator("img").waitFor();
   assert.equal(
-    await homeProject.locator("img").evaluate((image: HTMLImageElement) => image.naturalWidth > 0),
+    await homeProject
+      .locator("img")
+      .evaluate((image: HTMLImageElement) => image.naturalWidth > 0),
     true,
   );
   await pageUI.getByRole("button", { name: "列表视图" }).click();
@@ -569,7 +667,10 @@ try {
   });
   await projectButton.click();
   assert.equal(
-    await pageUI.locator(".identity").getByRole("button", { name: "删除项目" }).count(),
+    await pageUI
+      .locator(".identity")
+      .getByRole("button", { name: "删除项目" })
+      .count(),
     0,
   );
   checks++;
@@ -596,7 +697,10 @@ try {
   assert.equal((await pageUI.locator("aside").boundingBox())!.width, 64);
   await pageUI.getByRole("button", { name: "展开项目目录" }).click();
   await pageUI.waitForTimeout(200);
-  assert.equal((await pageUI.locator("aside").boundingBox())!.width, resizedWidth);
+  assert.equal(
+    (await pageUI.locator("aside").boundingBox())!.width,
+    resizedWidth,
+  );
   checks += 4;
   await pageUI.getByRole("button", { name: "收起项目树" }).click();
   assert.equal(await pageUI.locator(".project-list").count(), 0);
@@ -631,9 +735,7 @@ try {
     .locator(".context-submenu-panel")
     .getByRole("menuitem", { name: folderName })
     .waitFor();
-  await contextMenu
-    .getByRole("menuitem", { name: /删除项目/ })
-    .waitFor();
+  await contextMenu.getByRole("menuitem", { name: /删除项目/ }).waitFor();
   await contextMenu.getByRole("menuitem", { name: /置顶/ }).waitFor();
   await fs.mkdir("test-results", { recursive: true });
   await pageUI.screenshot({
@@ -653,8 +755,9 @@ try {
         response.request().method() === "PUT",
     ),
     projectButton.evaluate((source) => {
-      const target = [...document.querySelectorAll<HTMLElement>(".folder-title")]
-        .find((element) => element.textContent?.includes("未归档"));
+      const target = [
+        ...document.querySelectorAll<HTMLElement>(".folder-title"),
+      ].find((element) => element.textContent?.includes("未归档"));
       if (!target) throw new Error("找不到未归档目录");
       const data = new DataTransfer();
       source.dispatchEvent(
@@ -670,7 +773,8 @@ try {
   ]);
   await unfiledGroup.getByRole("button", { name: "▣ " + p.name }).waitFor();
   assert.equal(
-    (await ok("/state")).projects.find((item: any) => item.id === p.id).folderId,
+    (await ok("/state")).projects.find((item: any) => item.id === p.id)
+      .folderId,
     null,
   );
   checks += 2;
@@ -689,8 +793,9 @@ try {
         response.request().method() === "PUT",
     ),
     sourceFolderTitle.evaluate((source, targetName) => {
-      const target = [...document.querySelectorAll<HTMLElement>(".folder-title")]
-        .find((element) => element.textContent?.includes(targetName));
+      const target = [
+        ...document.querySelectorAll<HTMLElement>(".folder-title"),
+      ].find((element) => element.textContent?.includes(targetName));
       if (!target) throw new Error("找不到目标目录");
       const data = new DataTransfer();
       source.dispatchEvent(
@@ -743,7 +848,10 @@ try {
   const createButtonContrast =
     (Math.max(foreground, background) + 0.05) /
     (Math.min(foreground, background) + 0.05);
-  assert(createButtonContrast >= 4.5, `创建项目按钮对比度不足：${createButtonContrast}`);
+  assert(
+    createButtonContrast >= 4.5,
+    `创建项目按钮对比度不足：${createButtonContrast}`,
+  );
   checks++;
   await createProjectButton.click();
   await pageUI

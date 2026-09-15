@@ -1,6 +1,6 @@
 ---
 name: project-management
-description: Operate projects through procli, including product-project creation with default or custom SOPs, administrator deletion, and local/NAS target selection. Always use when the user explicitly says "procli" or asks to use procli, including requests such as "用 procli 帮我创建一个项目：蘑菇铲".
+description: Read and operate projects through procli, including directory/project listing, task-node listing and record inspection, product-project creation, administrator deletion, and local/NAS target selection. Always use when the user explicitly says "procli" or asks to use procli.
 ---
 
 # Project Management
@@ -9,7 +9,13 @@ Use the bundled `procli` executable as the only execution surface. Load the curr
 
 `procli` is the global explicit trigger word for this Skill. When it appears as the requested project-operation tool, route here even if the user does not mention the Skill name. Infer the operation and structured inputs from the surrounding natural language, then follow the matching main line.
 
-The logical capabilities are `project.service.project.create` and `project.service.project.delete`. If the matching adapter mapping is unresolved or unsupported, return `CAPABILITY_UNAVAILABLE`.
+The logical capabilities are `project.service.directory.list`, `project.service.task.list`, `project.service.task.read`, `project.service.project.create`, and `project.service.project.delete`. If the matching adapter mapping is unresolved or unsupported, return `CAPABILITY_UNAVAILABLE`.
+
+## Contract
+
+- Input: a directory-list intent, or an exact project name and optionally an exact task-node name; write operations retain their existing authorization inputs.
+- Strategy: select the requested Profile, verify the target, execute the matching structured procli command, and distinguish missing or ambiguous names from empty results.
+- Output: report the selected target and the CLI's structured project/task data. Read paths must not use write flags, idempotency keys, direct service APIs, or mutate project state.
 
 ## Target routing
 
@@ -20,6 +26,34 @@ The default Profile is `nas`. Respect this precedence exactly:
 ```
 
 Run `procli profile current --json` and `procli doctor --json` before a write. Use `--profile local` for a one-command development override. Change the saved Profile only when the user asks for a persistent switch. Never silently switch environments after a connection or authentication failure.
+
+## Read project information
+
+These commands are read-only and do not require write confirmation. Use `--profile <name>` only when the user requests a non-current target.
+
+- For existing folders and projects:
+
+  ```bash
+  procli directory list --json
+  ```
+
+  Preserve folder IDs, project-to-folder relationships, pinned state, timestamps, task counts, and progress from the JSON result.
+
+- For all task nodes in one project:
+
+  ```bash
+  procli task list --project "<exact project name>" --json
+  ```
+
+  Return every task in service order with its current status, ownership, dependencies, work description, acceptance criteria, Wiki path, and timestamps.
+
+- For the complete state and records of one task node:
+
+  ```bash
+  procli task get --project "<exact project name>" --task "<exact task name>" --json
+  ```
+
+  Report the full current task, resolved dependencies and dependents, status history, activity events, Agent runs, artifact metadata, Wiki metadata, and notifications. Do not describe an absent record collection as an error; preserve it as an empty array or `null` according to the CLI result.
 
 ## Create a product project
 
@@ -69,10 +103,12 @@ Deletion is a recoverable soft delete, but it is a high-risk administrator actio
 - `ADMIN_REQUIRED`: tell the user to contact the system administrator; do not seek a bypass.
 - `DELETE_CONFIRMATION_MISMATCH`: request the exact project name and rebuild the preview.
 - `SERVICE_UNAVAILABLE`: report the selected Profile and stop without changing environments.
+- `NOT_FOUND` on a read: state whether the project or task was not found and request an exact name; do not substitute a similar item.
+- `TASK_NAME_AMBIGUOUS`: report the conflicting task IDs and ask the user to disambiguate; do not choose one silently.
 - Unknown write result: retry only with the same idempotency key.
 
 ## Output contract
 
-For creation, report the project name and ID, target Profile/environment, SOP mode, task count, Wiki count, and verification. For deletion, report the exact project name and ID, deletion time, actor, recoverable status, target, and verification. Never expose credentials or local token storage.
+For directory reads, report folder/project counts and the requested structured listing. For task lists, report the project identity, task count, and all nodes. For task detail, report the current status plus all returned history and related record groups. For creation, report the project name and ID, target Profile/environment, SOP mode, task count, Wiki count, and verification. For deletion, report the exact project name and ID, deletion time, actor, recoverable status, target, and verification. Never expose credentials or local token storage.
 
 After a reported execution failure, preserve the failed command, structured error code, and target metadata for a separately authorized plugin update. Runtime execution must not edit this Skill or its adapters.

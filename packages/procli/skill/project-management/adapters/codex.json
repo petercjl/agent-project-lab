@@ -4,6 +4,88 @@
   "platform": "codex",
   "mappings": [
     {
+      "capability_id": "project.service.directory.list",
+      "implementation": {
+        "kind": "stable-cli",
+        "discovery": "Resolve procli from PATH and verify it with procli version and procli capabilities --json.",
+        "execution": "Run procli directory list against the selected Profile.",
+        "normalization": "Use the procli JSON envelope without reinterpretation."
+      },
+      "features": [
+        "profile_selection",
+        "target_identity_verification",
+        "read_only",
+        "folder_project_relationships",
+        "structured_json"
+      ],
+      "status": "tested",
+      "permissions": [
+        "Network access to the selected service",
+        "Authenticated read access"
+      ],
+      "normalization": "Use the procli JSON envelope without reinterpretation.",
+      "tested_date": "2026-09-15",
+      "evidence": [
+        "Codex executed the source procli against the local service and verified folder/project counts and relationships without writes."
+      ]
+    },
+    {
+      "capability_id": "project.service.task.list",
+      "implementation": {
+        "kind": "stable-cli",
+        "discovery": "Resolve procli from PATH and verify it with procli version and procli capabilities --json.",
+        "execution": "Run procli task list with an exact project name.",
+        "normalization": "Use the procli JSON envelope without reinterpretation."
+      },
+      "features": [
+        "profile_selection",
+        "target_identity_verification",
+        "read_only",
+        "exact_project_name_resolution",
+        "complete_task_nodes",
+        "structured_json"
+      ],
+      "status": "tested",
+      "permissions": [
+        "Network access to the selected service",
+        "Authenticated read access"
+      ],
+      "normalization": "Use the procli JSON envelope without reinterpretation.",
+      "tested_date": "2026-09-15",
+      "evidence": [
+        "Codex executed the source procli against the local service and verified all task nodes for an existing project."
+      ]
+    },
+    {
+      "capability_id": "project.service.task.read",
+      "implementation": {
+        "kind": "stable-cli",
+        "discovery": "Resolve procli from PATH and verify it with procli version and procli capabilities --json.",
+        "execution": "Run procli task get with exact project and task names.",
+        "normalization": "Use the procli JSON envelope without reinterpretation."
+      },
+      "features": [
+        "profile_selection",
+        "target_identity_verification",
+        "read_only",
+        "exact_project_name_resolution",
+        "exact_task_name_resolution",
+        "status_history",
+        "related_records",
+        "structured_json"
+      ],
+      "status": "tested",
+      "permissions": [
+        "Network access to the selected service",
+        "Authenticated read access"
+      ],
+      "normalization": "Use the procli JSON envelope without reinterpretation.",
+      "tested_date": "2026-09-15",
+      "evidence": [
+        "Codex executed the source procli against the local service and verified current task state, history, dependencies, events, runs, artifacts, Wiki metadata, and notifications."
+      ]
+    },
+    {
       "capability_id": "project.service.project.create",
       "implementation": {
         "kind": "stable-cli",

@@ -46,6 +46,39 @@ async function mockService(environment) {
           },
         }),
       );
+    if (req.url === "/api/v1/directory" && req.method === "GET")
+      return res.end(
+        JSON.stringify({
+          ok: true,
+          data: {
+            counts: {
+              folders: 1,
+              projects: 1,
+              pinnedProjects: 0,
+              unfiledProjects: 0,
+            },
+            folders: [
+              {
+                id: "folder-1",
+                name: "新品",
+                directoryOrder: 0,
+                projectIds: ["project-1"],
+              },
+            ],
+            projects: [
+              {
+                id: "project-1",
+                name: "Test",
+                folderId: "folder-1",
+                folderName: "新品",
+                taskCount: 2,
+                completedTaskCount: 1,
+                progress: 50,
+              },
+            ],
+          },
+        }),
+      );
     if (req.url === "/api/v1/projects" && req.method === "POST") {
       let raw = "";
       req.on("data", (chunk) => (raw += chunk));
@@ -102,6 +135,47 @@ async function mockService(environment) {
             project: { id: "project-1", name: "Test" },
             taskCount: 7,
             wikiCount: 8,
+          },
+        }),
+      );
+    if (req.url === "/api/v1/projects/project-1/tasks" && req.method === "GET")
+      return res.end(
+        JSON.stringify({
+          ok: true,
+          data: {
+            project: { id: "project-1", name: "Test" },
+            count: 2,
+            tasks: [
+              { id: "task-1", title: "市场调研", status: "已完成" },
+              { id: "task-2", title: "立项", status: "进行中" },
+            ],
+          },
+        }),
+      );
+    if (
+      req.url?.startsWith(
+        "/api/v1/projects/project-1/tasks/resolve/by-name?",
+      ) &&
+      req.method === "GET"
+    )
+      return res.end(
+        JSON.stringify({
+          ok: true,
+          data: {
+            project: { id: "project-1", name: "Test" },
+            task: { id: "task-1", title: "市场调研", status: "已完成" },
+            dependencies: [],
+            dependents: [{ id: "task-2", title: "立项", status: "进行中" }],
+            statusHistory: [
+              { action: "task.approve", from: "待审核", to: "已完成" },
+            ],
+            records: {
+              events: [{ id: "event-1", type: "task.approve" }],
+              runs: [{ id: "run-1", status: "completed" }],
+              artifacts: [],
+              wiki: { path: "wiki/market.md", version: 2 },
+              notifications: [],
+            },
           },
         }),
       );
@@ -198,6 +272,51 @@ test("local Profile supports dry-run and verified project creation", async (t) =
   assert.equal(created.json.data.wiki.count, 8);
   assert.equal(created.json.data.verification, "write-after-readback");
   assert.equal(mock.creates(), 1);
+});
+
+test("read-only commands return directory, task list, and task records", async (t) => {
+  const mock = await mockService("development");
+  t.after(() => mock.server.close());
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), "procli-read-"));
+  t.after(() => fs.rm(home, { recursive: true, force: true }));
+  const env = { PROCLI_CONFIG_PATH: path.join(home, "config.json") };
+  await run(
+    [
+      "profile",
+      "add",
+      "local",
+      "--url",
+      mock.url,
+      "--environment",
+      "development",
+    ],
+    env,
+  );
+  await run(["profile", "use", "local"], env);
+
+  const directory = await run(["directory", "list"], env);
+  assert.equal(directory.code, 0);
+  assert.equal(directory.json.data.counts.projects, 1);
+  assert.equal(directory.json.data.folders[0].name, "新品");
+  assert.equal(directory.json.data.projects[0].progress, 50);
+
+  const tasks = await run(["task", "list", "--project", "Test"], env);
+  assert.equal(tasks.code, 0);
+  assert.equal(tasks.json.data.project.name, "Test");
+  assert.equal(tasks.json.data.count, 2);
+  assert.equal(tasks.json.data.tasks[0].status, "已完成");
+
+  const detail = await run(
+    ["task", "get", "--project", "Test", "--task", "市场调研"],
+    env,
+  );
+  assert.equal(detail.code, 0);
+  assert.equal(detail.json.data.task.id, "task-1");
+  assert.equal(detail.json.data.statusHistory[0].to, "已完成");
+  assert.equal(detail.json.data.records.runs[0].status, "completed");
+  assert.equal(detail.json.data.records.wiki.version, 2);
+  assert.equal(mock.creates(), 0);
+  assert.equal(mock.deletes(), 0);
 });
 
 test("custom SOP creation validates and sends node names with descriptions", async (t) => {

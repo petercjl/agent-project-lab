@@ -16,7 +16,7 @@ import {
 import { inspectTarget, request } from "./client.mjs";
 import { installSkill, skillSource, skillStatus } from "./skill.mjs";
 
-const VERSION = "0.2.0";
+const VERSION = "0.3.0";
 const help = `procli ${VERSION} — Agent-first project management CLI
 
 Profile（默认 nas）：
@@ -28,6 +28,9 @@ Profile（默认 nas）：
   auth status|logout [--profile NAME]
 
 项目：
+  directory list
+  task list --project PROJECT_NAME
+  task get --project PROJECT_NAME --task TASK_NAME
   project create --name NAME [--goal TEXT] [--type product] [--sop-file FILE]
                  [--mode agent] [--idempotency-key KEY] [--dry-run] [--yes]
   project delete --name NAME --confirm-name NAME --yes
@@ -167,6 +170,15 @@ async function authLogin(profile, options) {
     };
   }
   throw new CliError("AUTH_TIMEOUT", "等待钉钉授权超时，请重新运行 auth login");
+}
+
+async function resolveProject(profile, name) {
+  return (
+    await request(
+      profile,
+      `/api/v1/projects/resolve/by-name?name=${encodeURIComponent(name)}`,
+    )
+  ).data.project;
 }
 
 export async function main(argv) {
@@ -357,6 +369,30 @@ export async function main(argv) {
       });
     }
     throw new CliError("UNKNOWN_COMMAND", "未知 auth 命令");
+  }
+  if (group === "directory" && command === "list") {
+    const target = await inspectTarget(profile);
+    const result = await request(profile, "/api/v1/directory");
+    return output({ target, ...result.data });
+  }
+  if (group === "task" && command === "list") {
+    const target = await inspectTarget(profile);
+    const project = await resolveProject(profile, required(options, "project"));
+    const result = await request(
+      profile,
+      `/api/v1/projects/${encodeURIComponent(project.id)}/tasks`,
+    );
+    return output({ target, ...result.data });
+  }
+  if (group === "task" && command === "get") {
+    const target = await inspectTarget(profile);
+    const project = await resolveProject(profile, required(options, "project"));
+    const taskName = required(options, "task");
+    const result = await request(
+      profile,
+      `/api/v1/projects/${encodeURIComponent(project.id)}/tasks/resolve/by-name?name=${encodeURIComponent(taskName)}`,
+    );
+    return output({ target, ...result.data });
   }
   if (group === "project" && command === "create") {
     const target = await inspectTarget(profile);
