@@ -26,7 +26,7 @@ git -C "$repo" merge --ff-only origin/main
 commit="$(git -C "$repo" rev-parse HEAD)"
 export APP_COMMIT="$commit"
 
-sudo -n docker compose --env-file "$runtime_env" -f "$repo/deploy/compose.yaml" up -d --build
+sudo -n env APP_COMMIT="$commit" docker compose --env-file "$runtime_env" -f "$repo/deploy/compose.yaml" up -d --build
 
 for attempt in $(seq 1 30); do
   container_health="$(sudo -n docker inspect agent-project-lab-app-1 --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' 2>/dev/null || true)"
