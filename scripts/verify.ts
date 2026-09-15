@@ -593,6 +593,21 @@ try {
   await pageUI.waitForTimeout(200);
   assert.equal((await pageUI.locator("aside").boundingBox())!.width, resizedWidth);
   checks += 4;
+  await pageUI.getByRole("button", { name: "收起项目树" }).click();
+  assert.equal(await pageUI.locator(".project-list").count(), 0);
+  await pageUI.getByRole("button", { name: "展开项目树" }).click();
+  assert.equal(await pageUI.locator(".project-list").count(), 1);
+  const folderToggle = pageUI.getByRole("button", {
+    name: `收起目录 ${folderName}`,
+    exact: true,
+  });
+  await folderToggle.click();
+  assert.equal(await projectButton.isVisible(), false);
+  await pageUI
+    .getByRole("button", { name: `展开目录 ${folderName}`, exact: true })
+    .click();
+  assert.equal(await projectButton.isVisible(), true);
+  checks += 4;
   assert.equal(await pageUI.getByLabel("项目排序字段").count(), 0);
   assert.equal(await pageUI.getByLabel("切换排序方向").count(), 0);
   checks += 2;

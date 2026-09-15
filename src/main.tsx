@@ -3,6 +3,16 @@ import { createRoot } from "react-dom/client";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import "./style.css";
+function savedCollapsedGroups() {
+  try {
+    const value = JSON.parse(localStorage.getItem("collapsed-project-groups") || "[]");
+    return Array.isArray(value)
+      ? value.filter((item): item is string => typeof item === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
 function App() {
   const [auth, AUTH] = useS<any>(null),
     [s, S] = useS<any>(null),
@@ -33,6 +43,10 @@ function App() {
     [homeView, HOME_VIEW] = useS(
       localStorage.getItem("project-home-view") || "cards",
     ),
+    [directoryTreeCollapsed, DIRECTORY_TREE_COLLAPSED] = useS(
+      localStorage.getItem("project-directory-collapsed") === "true",
+    ),
+    [collapsedGroups, COLLAPSED_GROUPS] = useS<string[]>(savedCollapsedGroups),
     [sidebarCollapsed, SIDEBAR_COLLAPSED] = useS(
       localStorage.getItem("sidebar-collapsed") === "true",
     ),
@@ -120,6 +134,16 @@ function App() {
   useE(() => {
     localStorage.setItem("project-home-view", homeView);
   }, [homeView]);
+  useE(() => {
+    localStorage.setItem(
+      "project-directory-collapsed",
+      String(directoryTreeCollapsed),
+    );
+    localStorage.setItem(
+      "collapsed-project-groups",
+      JSON.stringify(collapsedGroups),
+    );
+  }, [directoryTreeCollapsed, collapsedGroups]);
   useE(() => {
     if (!contextMenu) return;
     const close = () => CONTEXT_MENU(null);
@@ -211,6 +235,13 @@ function App() {
     DIR(false);
     D(null);
     HOME_OPEN(true);
+  }
+  function toggleProjectGroup(groupId: string) {
+    COLLAPSED_GROUPS((current) =>
+      current.includes(groupId)
+        ? current.filter((id) => id !== groupId)
+        : [...current, groupId],
+    );
   }
   async function create() {
     if (projectType !== "product") return;
@@ -518,12 +549,22 @@ function App() {
           </button>
         </div>
         <div className="directory-head">
-          <span>项目目录</span>
-          <small>拖拽排序 · 右键管理</small>
+          <button
+            aria-expanded={!directoryTreeCollapsed}
+            aria-label={directoryTreeCollapsed ? "展开项目树" : "收起项目树"}
+            onClick={() => DIRECTORY_TREE_COLLAPSED(!directoryTreeCollapsed)}
+          >
+            <span>{directoryTreeCollapsed ? "▸" : "▾"} 项目目录</span>
+            <small>拖拽排序 · 右键管理</small>
+          </button>
         </div>
-        <div className="project-list">
-          {projectGroups.map((group: any) => (
-            <section className="project-group" key={group.id || "unfiled"}>
+        {!directoryTreeCollapsed && (
+          <div className="project-list">
+            {projectGroups.map((group: any) => {
+              const groupKey = group.id || "__unfiled__";
+              const groupCollapsed = collapsedGroups.includes(groupKey);
+              return (
+                <section className="project-group" key={groupKey}>
               <div
                 className="folder-title"
                 draggable={Boolean(group.id && !group.pinned)}
@@ -548,12 +589,19 @@ function App() {
                     dropProject(dragged.id, group.id);
                 }}
               >
-                <span>
-                  {group.pinned ? "⌖" : group.id ? "▾" : "⌂"} {group.name}
-                </span>
-                <small>{group.projects.length}</small>
+                <button
+                  aria-expanded={!groupCollapsed}
+                  aria-label={`${groupCollapsed ? "展开" : "收起"}目录 ${group.name}`}
+                  onClick={() => toggleProjectGroup(groupKey)}
+                >
+                  <span>
+                    {groupCollapsed ? "▸" : "▾"} {group.pinned ? "⌖" : "□"}{" "}
+                    {group.name}
+                  </span>
+                  <small>{group.projects.length}</small>
+                </button>
               </div>
-              {group.projects.map((x: any) => (
+              {!groupCollapsed && group.projects.map((x: any) => (
                 <div
                   className={`project-row ${pid === x.id ? "selected" : ""}`}
                   key={x.id}
@@ -617,8 +665,10 @@ function App() {
                 </div>
               ))}
             </section>
-          ))}
-        </div>
+              );
+            })}
+          </div>
+        )}
         <label className="import">
           ↥ 从备份恢复项目
           <input

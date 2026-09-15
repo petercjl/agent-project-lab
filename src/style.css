@@ -230,12 +230,24 @@ aside {
   color: white;
 }
 .directory-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 2px 8px 7px;
+  padding: 2px 0 5px;
   color: #8197b3;
   font-size: 11px;
+}
+.directory-head > button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  border: 0;
+  background: transparent;
+  color: #8197b3;
+  text-align: left;
+}
+.directory-head > button:hover {
+  background: #203550;
+  color: #dbe6f5;
 }
 .directory-head small {
   color: #617996;
@@ -249,12 +261,26 @@ aside {
   margin: 4px 0 10px;
 }
 .folder-title {
-  display: flex;
-  justify-content: space-between;
-  padding: 8px 9px 4px;
+  padding: 2px 0;
   color: #7f95b1;
   font-size: 10px;
   text-transform: none;
+}
+.folder-title > button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 9px 5px;
+  border: 0;
+  background: transparent;
+  color: #7f95b1;
+  font-size: 10px;
+  text-align: left;
+}
+.folder-title > button:hover {
+  background: #203550;
+  color: #c8d6e8;
 }
 .folder-title[draggable="true"] {
   cursor: grab;
