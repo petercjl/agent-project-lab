@@ -41,6 +41,8 @@ function App() {
     [folderOpen, FOLDER_OPEN] = useS(false),
     [folderName, FOLDER_NAME] = useS(""),
     [contextMenu, CONTEXT_MENU] = useS<any>(null),
+    [boardDrag, BOARD_DRAG] = useS<any>(null),
+    [boardDrop, BOARD_DROP] = useS<any>(null),
     [homeOpen, HOME_OPEN] = useS(true),
     [homeView, HOME_VIEW] = useS(
       localStorage.getItem("project-home-view") || "cards",
@@ -354,6 +356,98 @@ function App() {
       });
       D(null);
     });
+  }
+  function orderedStageTasks(stage: string) {
+    return tasks
+      .map((item: any, index: number) => ({ item, index }))
+      .filter(({ item }: any) => item.stage === stage)
+      .sort(
+        (a: any, b: any) =>
+          (a.item.boardOrder ?? a.index) - (b.item.boardOrder ?? b.index),
+      )
+      .map(({ item }: any) => item);
+  }
+  function currentTaskGroups() {
+    return Object.fromEntries(
+      p.stages.map((stage: string) => [stage, orderedStageTasks(stage)]),
+    );
+  }
+  async function saveBoardOrder(
+    nodeOrder: string[],
+    groups: Record<string, any[]>,
+  ) {
+    await act(() =>
+      api(
+        `/projects/${pid}/board/order`,
+        "PUT",
+        {
+          nodeOrder,
+          tasks: nodeOrder.flatMap((stage) =>
+            (groups[stage] || []).map((item: any) => ({
+              id: item.id,
+              stage,
+            })),
+          ),
+        },
+        { "idempotency-key": crypto.randomUUID() },
+      ),
+    );
+  }
+  function startBoardDrag(event: React.DragEvent, item: any) {
+    event.stopPropagation();
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData(
+      "application/x-project-board",
+      JSON.stringify(item),
+    );
+    event.dataTransfer.setData("text/plain", JSON.stringify(item));
+    BOARD_DRAG(item);
+    BOARD_DROP(null);
+  }
+  function finishBoardDrag() {
+    BOARD_DRAG(null);
+    BOARD_DROP(null);
+  }
+  async function dropNode(targetStage: string, edge: "before" | "after") {
+    if (boardDrag?.kind !== "node" || boardDrag.stage === targetStage) {
+      finishBoardDrag();
+      return;
+    }
+    const nodeOrder = [...p.stages];
+    const from = nodeOrder.indexOf(boardDrag.stage);
+    if (from < 0) return finishBoardDrag();
+    const [moved] = nodeOrder.splice(from, 1);
+    const target = nodeOrder.indexOf(targetStage);
+    nodeOrder.splice(target + (edge === "after" ? 1 : 0), 0, moved);
+    const groups = currentTaskGroups();
+    finishBoardDrag();
+    await saveBoardOrder(nodeOrder, groups);
+  }
+  async function dropTask(
+    targetStage: string,
+    targetTaskId = "",
+    edge: "before" | "after" = "after",
+  ) {
+    if (boardDrag?.kind !== "task") return finishBoardDrag();
+    if (targetTaskId && boardDrag.id === targetTaskId) return finishBoardDrag();
+    const groups = currentTaskGroups();
+    let moved: any = null;
+    for (const stage of p.stages) {
+      const index = groups[stage].findIndex(
+        (item: any) => item.id === boardDrag.id,
+      );
+      if (index >= 0) [moved] = groups[stage].splice(index, 1);
+    }
+    if (!moved) return finishBoardDrag();
+    const target = groups[targetStage];
+    let index = targetTaskId
+      ? target.findIndex((item: any) => item.id === targetTaskId)
+      : target.length;
+    if (index < 0) index = target.length;
+    else if (targetTaskId && edge === "after") index++;
+    target.splice(index, 0, moved);
+    finishBoardDrag();
+    await saveBoardOrder(p.stages, groups);
   }
   async function moveProject(project: any, folderId: string) {
     await act(() =>
@@ -1064,16 +1158,66 @@ function App() {
                 </div>
                 <section className="board">
                   {p.stages.map((stage: string, i: number) => {
-                    const ts = tasks.filter(
+                    const ts = orderedStageTasks(stage).filter(
                       (t: any) =>
-                        t.stage === stage &&
-                        (filter === "全部" ||
-                          (filter === "我的任务" && t.owner === actor) ||
-                          filter === t.status),
+                        filter === "全部" ||
+                        (filter === "我的任务" && t.owner === actor) ||
+                        filter === t.status,
                     );
                     return (
-                      <div className="column" key={stage}>
-                        <div className="column-title">
+                      <div
+                        className={`column ${
+                          boardDrop?.kind === "node" &&
+                          boardDrop.stage === stage
+                            ? `node-drop-${boardDrop.edge}`
+                            : ""
+                        }`}
+                        key={stage}
+                        onDragOver={(event) => {
+                          if (!boardDrag) return;
+                          event.preventDefault();
+                          event.dataTransfer.dropEffect = "move";
+                          if (boardDrag.kind === "node") {
+                            const rect =
+                              event.currentTarget.getBoundingClientRect();
+                            BOARD_DROP({
+                              kind: "node",
+                              stage,
+                              edge:
+                                event.clientX < rect.left + rect.width / 2
+                                  ? "before"
+                                  : "after",
+                            });
+                          } else if (boardDrag.kind === "task") {
+                            BOARD_DROP({ kind: "task-end", stage });
+                          }
+                        }}
+                        onDrop={(event) => {
+                          event.preventDefault();
+                          if (boardDrag?.kind === "node")
+                            dropNode(
+                              stage,
+                              boardDrop?.kind === "node"
+                                ? boardDrop.edge
+                                : "after",
+                            );
+                          else if (boardDrag?.kind === "task") dropTask(stage);
+                        }}
+                      >
+                        <div
+                          className={`column-title ${
+                            boardDrag?.kind === "node" &&
+                            boardDrag.stage === stage
+                              ? "dragging"
+                              : ""
+                          }`}
+                          draggable
+                          onDragStart={(event) =>
+                            startBoardDrag(event, { kind: "node", stage })
+                          }
+                          onDragEnd={finishBoardDrag}
+                          title="拖拽调整节点位置"
+                        >
                           <i
                             style={{
                               background: [
@@ -1084,7 +1228,7 @@ function App() {
                                 "#49a49c",
                                 "#728ca5",
                                 "#65a575",
-                              ][i],
+                              ][i % 7],
                             }}
                           />
                           <strong>{stage}</strong>
@@ -1101,7 +1245,52 @@ function App() {
                         {ts.map((t: any) => (
                           <button
                             key={t.id}
-                            className="card"
+                            className={`card ${
+                              boardDrag?.kind === "task" &&
+                              boardDrag.id === t.id
+                                ? "dragging"
+                                : ""
+                            } ${
+                              boardDrop?.kind === "task" &&
+                              boardDrop.taskId === t.id
+                                ? `task-drop-${boardDrop.edge}`
+                                : ""
+                            }`}
+                            draggable
+                            onDragStart={(event) =>
+                              startBoardDrag(event, {
+                                kind: "task",
+                                id: t.id,
+                              })
+                            }
+                            onDragEnd={finishBoardDrag}
+                            onDragOver={(event) => {
+                              if (boardDrag?.kind !== "task") return;
+                              event.preventDefault();
+                              event.stopPropagation();
+                              const rect =
+                                event.currentTarget.getBoundingClientRect();
+                              BOARD_DROP({
+                                kind: "task",
+                                stage,
+                                taskId: t.id,
+                                edge:
+                                  event.clientY < rect.top + rect.height / 2
+                                    ? "before"
+                                    : "after",
+                              });
+                            }}
+                            onDrop={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              dropTask(
+                                stage,
+                                t.id,
+                                boardDrop?.kind === "task"
+                                  ? boardDrop.edge
+                                  : "after",
+                              );
+                            }}
                             onClick={() => D(t)}
                           >
                             <div className="card-top">
@@ -1143,7 +1332,12 @@ function App() {
                           </button>
                         ))}
                         <button
-                          className="add-card"
+                          className={`add-card ${
+                            boardDrop?.kind === "task-end" &&
+                            boardDrop.stage === stage
+                              ? "task-drop-end"
+                              : ""
+                          }`}
                           onClick={() =>
                             act(async () => {
                               const title = prompt(`在「${stage}」创建任务`);

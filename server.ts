@@ -79,6 +79,18 @@ const taskView = (state: any, task: any) => {
     deletable: contentStatus === "empty",
   };
 };
+const projectTasksInBoardOrder = (state: any, project: any) =>
+  state.tasks
+    .map((task: any, index: number) => ({ task, index }))
+    .filter(({ task }: any) => task.projectId === project.id)
+    .sort((a: any, b: any) => {
+      const stage =
+        project.stages.indexOf(a.task.stage) -
+        project.stages.indexOf(b.task.stage);
+      if (stage) return stage;
+      return (a.task.boardOrder ?? a.index) - (b.task.boardOrder ?? b.index);
+    })
+    .map(({ task }: any) => task);
 async function removeEmptyTasks(state: any, tasks: any[], who: string) {
   const blocked = tasks.filter(
     (task: any) => taskContentStatus(state, task) !== "empty",
@@ -223,6 +235,7 @@ route("get", "/api/capabilities", () => ({
     "project.restore",
     "project.node.create",
     "project.node.delete-empty",
+    "project.board.reorder",
     "task.create",
     "task.delete-empty",
     "task.update",
@@ -589,7 +602,7 @@ route("post", "/api/v1/projects", (req) => createProjectRequest(req, true));
 route("get", "/api/v1/projects/:id", async (req) => {
   const s: any = await read();
   const project = activeProject(s.projects, req.params.id);
-  const tasks = s.tasks.filter((task: any) => task.projectId === project.id);
+  const tasks = projectTasksInBoardOrder(s, project);
   return {
     project,
     tasks: {
@@ -684,7 +697,7 @@ route("post", "/api/members", (req) =>
 route("get", "/api/v1/projects/:id/tasks", async (req) => {
   const s: any = await read();
   const project = activeProject(s.projects, req.params.id);
-  const tasks = s.tasks.filter((task: any) => task.projectId === project.id);
+  const tasks = projectTasksInBoardOrder(s, project);
   return {
     project: {
       id: project.id,
@@ -714,9 +727,7 @@ route("get", "/api/v1/projects/:id/tasks/resolve/by-name", async (req) => {
   const s: any = await read();
   const project = activeProject(s.projects, req.params.id);
   const key = taskNameKey(req.query.name);
-  const projectTasks = s.tasks.filter(
-    (task: any) => task.projectId === project.id,
-  );
+  const projectTasks = projectTasksInBoardOrder(s, project);
   const matches = projectTasks.filter(
     (task: any) => taskNameKey(task.title) === key,
   );
@@ -822,6 +833,75 @@ route("delete", "/api/projects/:id/nodes/:stage", (req) =>
     };
   }),
 );
+route("put", "/api/projects/:id/board/order", (req) =>
+  mutate(req, (s: any, who: string) => {
+    const project = activeProject(s.projects, req.params.id);
+    const nodeOrder = req.body.nodeOrder;
+    const placements = req.body.tasks;
+    if (
+      !Array.isArray(nodeOrder) ||
+      nodeOrder.some((item: any) => typeof item !== "string") ||
+      nodeOrder.length !== project.stages.length ||
+      new Set(nodeOrder).size !== nodeOrder.length ||
+      nodeOrder.some((item: string) => !project.stages.includes(item))
+    )
+      throw new Fault(
+        "INVALID_BOARD_ORDER",
+        "节点顺序必须完整包含当前项目的全部节点",
+      );
+    const projectTasks = s.tasks.filter(
+      (task: any) => task.projectId === project.id,
+    );
+    if (
+      !Array.isArray(placements) ||
+      placements.length !== projectTasks.length ||
+      placements.some(
+        (item: any) =>
+          !item ||
+          typeof item.id !== "string" ||
+          typeof item.stage !== "string" ||
+          !nodeOrder.includes(item.stage),
+      ) ||
+      new Set(placements.map((item: any) => item.id)).size !==
+        placements.length ||
+      placements.some(
+        (item: any) => !projectTasks.some((task: any) => task.id === item.id),
+      )
+    )
+      throw new Fault(
+        "INVALID_BOARD_ORDER",
+        "任务顺序必须完整包含当前项目的全部任务",
+      );
+    const beforeNodes = [...project.stages];
+    project.stages = [...nodeOrder];
+    const nextOrder = new Map<string, number>();
+    for (const placement of placements) {
+      const task = projectTasks.find((item: any) => item.id === placement.id);
+      const boardOrder = nextOrder.get(placement.stage) || 0;
+      nextOrder.set(placement.stage, boardOrder + 1);
+      if (task.stage !== placement.stage || task.boardOrder !== boardOrder) {
+        task.stage = placement.stage;
+        task.boardOrder = boardOrder;
+        task.version++;
+        task.updatedAt = now();
+      }
+    }
+    audit(s, who, "board.reordered", project.id, {
+      beforeNodes,
+      nodeOrder: project.stages,
+      tasks: placements,
+    });
+    return {
+      projectId: project.id,
+      nodeOrder: project.stages,
+      tasks: placements.map((item: any) => ({
+        ...item,
+        boardOrder: projectTasks.find((task: any) => task.id === item.id)
+          .boardOrder,
+      })),
+    };
+  }),
+);
 route("post", "/api/tasks", (req) =>
   mutate(req, (s: any, who: string) => {
     const p = activeProject(s.projects, req.body.projectId);
@@ -835,6 +915,15 @@ route("post", "/api/tasks", (req) =>
       stage: b.stage,
       status: "待开始",
       contentStatus: "empty",
+      boardOrder:
+        Math.max(
+          -1,
+          ...s.tasks
+            .filter(
+              (task: any) => task.projectId === p.id && task.stage === b.stage,
+            )
+            .map((task: any, index: number) => task.boardOrder ?? index),
+        ) + 1,
       owner: b.owner,
       reviewer: "supervisor",
       priority: "中",

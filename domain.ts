@@ -237,6 +237,7 @@ export function makeProject(s: any, input: any) {
       stage: node.stage,
       status: "待开始",
       contentStatus: "empty",
+      boardOrder: 0,
       owner: node.owner,
       reviewer: "supervisor",
       priority: "中",

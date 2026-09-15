@@ -641,7 +641,53 @@ try {
     (item: any) => item.id === protectedTask.id,
   );
   assert.equal(protectedTaskState.contentStatus, "substantive");
-  checks += 10;
+  const boardState = await ok("/state");
+  const boardProject = boardState.projects.find(
+    (item: any) => item.id === custom.project.id,
+  );
+  const boardTasks = boardState.tasks.filter(
+    (item: any) => item.projectId === custom.project.id,
+  );
+  const targetStage = "立项评审";
+  const nodeOrder = [...boardProject.stages].reverse();
+  const taskPlacements = nodeOrder.flatMap((stage: string) =>
+    boardTasks
+      .filter(
+        (item: any) =>
+          (item.id === customTask.id ? targetStage : item.stage) === stage,
+      )
+      .map((item: any) => ({ id: item.id, stage })),
+  );
+  const reorderedBoard = await ok(
+    `/projects/${custom.project.id}/board/order`,
+    "PUT",
+    { nodeOrder, tasks: taskPlacements },
+    "agent",
+    `board-order-${Date.now()}`,
+  );
+  assert.deepEqual(reorderedBoard.nodeOrder, nodeOrder);
+  const boardReorderedState = await ok("/state");
+  assert.deepEqual(
+    boardReorderedState.projects.find(
+      (item: any) => item.id === custom.project.id,
+    ).stages,
+    nodeOrder,
+  );
+  assert.equal(
+    boardReorderedState.tasks.find((item: any) => item.id === customTask.id)
+      .stage,
+    targetStage,
+  );
+  assert.equal(
+    (
+      await api(`/projects/${custom.project.id}/board/order`, "PUT", {
+        nodeOrder,
+        tasks: taskPlacements.slice(1),
+      })
+    ).error.code,
+    "INVALID_BOARD_ORDER",
+  );
+  checks += 14;
   assert.equal(
     (
       await api(
@@ -790,16 +836,78 @@ try {
     uiStage.getByRole("button", { name: "删除节点 UI 空节点" }).click(),
   ]);
   await uiStage.waitFor({ state: "detached" });
+  const nodeHeaders = pageUI.locator(".column-title");
+  const firstNodeHeader = nodeHeaders.nth(0);
+  const secondNodeColumn = pageUI.locator(".column").nth(1);
+  const secondNodeBox = (await secondNodeColumn.boundingBox())!;
+  const nodeTransfer = await pageUI.evaluateHandle(() => new DataTransfer());
+  await firstNodeHeader.dispatchEvent("dragstart", {
+    dataTransfer: nodeTransfer,
+  });
+  await pageUI.waitForTimeout(50);
+  await secondNodeColumn.dispatchEvent("dragover", {
+    dataTransfer: nodeTransfer,
+    clientX: secondNodeBox.x + secondNodeBox.width - 2,
+    clientY: secondNodeBox.y + 20,
+  });
+  assert.equal(await pageUI.locator(".column.node-drop-after").count(), 1);
+  await Promise.all([
+    pageUI.waitForResponse(
+      (response) =>
+        response.url().includes(`/api/projects/${p.id}/board/order`) &&
+        response.request().method() === "PUT",
+    ),
+    secondNodeColumn.dispatchEvent("drop", {
+      dataTransfer: nodeTransfer,
+      clientX: secondNodeBox.x + secondNodeBox.width - 2,
+      clientY: secondNodeBox.y + 20,
+    }),
+  ]);
+  const sourceTaskCard = pageUI
+    .locator(".card")
+    .filter({ hasText: next.title })
+    .first();
+  const targetTaskCard = pageUI
+    .locator(".card")
+    .filter({ hasText: t.title })
+    .first();
+  const targetTaskBox = (await targetTaskCard.boundingBox())!;
+  const taskTransfer = await pageUI.evaluateHandle(() => new DataTransfer());
+  await sourceTaskCard.dispatchEvent("dragstart", {
+    dataTransfer: taskTransfer,
+  });
+  await pageUI.waitForTimeout(50);
+  await targetTaskCard.dispatchEvent("dragover", {
+    dataTransfer: taskTransfer,
+    clientX: targetTaskBox.x + 20,
+    clientY: targetTaskBox.y + 2,
+  });
+  assert.equal(await pageUI.locator(".card.task-drop-before").count(), 1);
+  await pageUI.screenshot({
+    path: "test-results/verification-board-drag.png",
+    fullPage: true,
+  });
+  await Promise.all([
+    pageUI.waitForResponse(
+      (response) =>
+        response.url().includes(`/api/projects/${p.id}/board/order`) &&
+        response.request().method() === "PUT",
+    ),
+    targetTaskCard.dispatchEvent("drop", {
+      dataTransfer: taskTransfer,
+      clientX: targetTaskBox.x + 20,
+      clientY: targetTaskBox.y + 2,
+    }),
+  ]);
   const emptyTaskCard = pageUI
     .locator(".card")
     .filter({ hasText: next.title })
     .first();
   await emptyTaskCard.click();
   await pageUI.getByText("空任务，可删除", { exact: false }).waitFor();
-  assert.equal(
-    await pageUI.getByRole("button", { name: "删除任务" }).isEnabled(),
-    true,
-  );
+  const emptyDeleteButton = pageUI.getByRole("button", { name: "删除任务" });
+  await emptyDeleteButton.click({ trial: true });
+  assert.equal(await emptyDeleteButton.isEnabled(), true);
   await pageUI.getByRole("button", { name: /关闭/ }).click();
   const protectedTaskCard = pageUI
     .locator(".card")
@@ -812,7 +920,7 @@ try {
     true,
   );
   await pageUI.getByRole("button", { name: /关闭/ }).click();
-  checks += 8;
+  checks += 12;
   checks++;
   await projectButton.hover();
   const hoverColors = await projectButton.evaluate((element) => {
@@ -1025,7 +1133,9 @@ try {
   await pageUI
     .locator("textarea.editor")
     .fill(content + "\n\n浏览器编辑已验证。");
-  await pageUI.getByRole("button", { name: "保存", exact: true }).click();
+  await pageUI
+    .getByRole("button", { name: "保存", exact: true })
+    .click({ force: true });
   await pageUI.getByText("浏览器编辑已验证。", { exact: true }).waitFor();
   checks++;
   await pageUI.getByRole("button", { name: "看板", exact: true }).click();
@@ -1051,6 +1161,7 @@ try {
         browserErrors: errors,
         screenshots: [
           "test-results/verification-board.png",
+          "test-results/verification-board-drag.png",
           "test-results/verification-mobile.png",
           "test-results/verification-context-menu.png",
           "test-results/verification-home.png",

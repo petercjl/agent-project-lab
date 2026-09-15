@@ -881,12 +881,32 @@ progress::-webkit-progress-value {
   min-height: 480px;
 }
 .column {
+  position: relative;
   width: 252px;
   min-width: 252px;
   background: #f0f3f7;
   border-radius: 9px;
   padding: 12px;
   align-self: stretch;
+}
+.column.node-drop-before::before,
+.column.node-drop-after::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  width: 3px;
+  border-radius: 3px;
+  background: #4f83d1;
+  box-shadow: 0 0 0 3px rgb(79 131 209 / 14%);
+  z-index: 4;
+  pointer-events: none;
+}
+.column.node-drop-before::before {
+  left: -10px;
+}
+.column.node-drop-after::after {
+  right: -10px;
 }
 .column-title {
   display: flex;
@@ -896,6 +916,11 @@ progress::-webkit-progress-value {
   font-weight: 600;
   margin-bottom: 18px;
   padding: 0 2px;
+  cursor: grab;
+  user-select: none;
+}
+.column-title:active {
+  cursor: grabbing;
 }
 .column-title i {
   width: 7px;
@@ -933,6 +958,7 @@ progress::-webkit-progress-value {
   color: #b93d3d;
 }
 .card {
+  position: relative;
   text-align: left;
   width: 100%;
   padding: 15px 13px;
@@ -940,6 +966,40 @@ progress::-webkit-progress-value {
   border-radius: 8px;
   margin-bottom: 10px;
   box-shadow: 0 2px 3px #1d304003;
+  cursor: grab;
+}
+.card:active {
+  cursor: grabbing;
+}
+.column-title.dragging,
+.card.dragging {
+  opacity: 0.45;
+}
+.card.task-drop-before::before,
+.card.task-drop-after::after,
+.add-card.task-drop-end::before {
+  content: "";
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  height: 3px;
+  border-radius: 3px;
+  background: #4f83d1;
+  box-shadow: 0 0 0 3px rgb(79 131 209 / 14%);
+  z-index: 4;
+  pointer-events: none;
+}
+.card.task-drop-before::before {
+  top: -7px;
+}
+.card.task-drop-after::after {
+  bottom: -7px;
+}
+.add-card.task-drop-end {
+  position: relative;
+}
+.add-card.task-drop-end::before {
+  top: -7px;
 }
 .card h3 {
   font-size: 13px;
