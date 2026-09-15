@@ -31,7 +31,8 @@ run finish --id ID --status completed|failed [--output 结果] [--quality 质量
 run list|get [--project ID] [--id ID]
 events list | notification list | member list|add --name 名称
 measurement add --project ID --label 事项 --mode manual|agent --minutes N [--correction-minutes N]
-通用：--actor ID --url URL --dry-run --idempotency-key KEY
+通用：--actor ID --url URL --token TOKEN --dry-run --idempotency-key KEY
+认证模式下也可使用环境变量 PROJECT_LAB_API_TOKEN，避免把 Token 写入命令历史。
 写命令 --dry-run 只显示请求。export 拒绝覆盖已有文件。Wiki 写入保留版本历史。
 这是执行接口，不是大模型运行器；Skill 在 Agent 宿主中执行。`;
 async function req(url: string, method = "GET", body?: any) {
@@ -46,6 +47,11 @@ async function req(url: string, method = "GET", body?: any) {
     method,
     headers: {
       "x-actor": String(opts.actor || "agent"),
+      ...(opts.token || process.env.PROJECT_LAB_API_TOKEN
+        ? {
+            authorization: `Bearer ${String(opts.token || process.env.PROJECT_LAB_API_TOKEN)}`,
+          }
+        : {}),
       ...(opts["idempotency-key"]
         ? { "idempotency-key": String(opts["idempotency-key"]) }
         : {}),

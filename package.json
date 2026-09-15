@@ -13,6 +13,7 @@
     "db": "bash scripts/local-db.sh",
     "cli": "tsx cli.ts",
     "test": "tsx --test tests/*.test.ts",
+    "verify:auth": "tsx scripts/verify-auth.ts",
     "check": "tsc --noEmit"
   },
   "dependencies": {

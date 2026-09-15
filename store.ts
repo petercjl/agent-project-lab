@@ -18,6 +18,28 @@ export async function init() {
     "INSERT INTO lab_state VALUES (1,$1) ON CONFLICT DO NOTHING",
     [JSON.stringify(initial())],
   );
+  await pool.query(`CREATE TABLE IF NOT EXISTS auth_users (
+    id text PRIMARY KEY,
+    union_id text UNIQUE NOT NULL,
+    open_id text,
+    corp_id text,
+    name text NOT NULL,
+    avatar_url text,
+    member_id text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    last_login_at timestamptz NOT NULL DEFAULT now()
+  )`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS auth_sessions (
+    token_hash char(64) PRIMARY KEY,
+    user_id text NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    last_seen_at timestamptz NOT NULL DEFAULT now(),
+    expires_at timestamptz NOT NULL
+  )`);
+  await pool.query(
+    "CREATE INDEX IF NOT EXISTS auth_sessions_expiry_idx ON auth_sessions(expires_at)",
+  );
+  await pool.query("DELETE FROM auth_sessions WHERE expires_at <= now()");
 }
 export async function read() {
   return (await pool.query("SELECT body FROM lab_state WHERE id=1")).rows[0]

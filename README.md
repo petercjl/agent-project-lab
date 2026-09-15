@@ -13,6 +13,7 @@
 - 人工/Agent 耗时记录及同事项平均耗时对比，人工纠正耗时计入总量。
 - 项目完整 JSON 导出与新副本恢复，含任务、Wiki、附件、历史、运行与审计。
 - `projectctl` CLI，结构化 JSON、错误码、dry-run、写入幂等键、版本冲突保护。
+- 企业钉钉 OAuth 登录、Corp ID 企业边界校验、员工身份与项目成员绑定、服务端会话和 Agent 独立令牌。
 - PostgreSQL 持久化；Markdown 与附件以普通文件保存；Docker/NAS 部署定义。
 
 ## 在这台电脑启动
@@ -31,6 +32,26 @@ npm start
 `npm run db` 只初始化专属的空目录；若目标目录存在但不是已知集群，会拒绝初始化。自定义 PostgreSQL 工具路径可设置 `PG_BIN`。本地集群使用回环地址 trust 认证，适合可信的单用户电脑；同机其他用户仍可能连接。
 
 `.env.example` 描述可选配置。应用启动自动读取 `.env`（不存在也可运行）；已有 `.env` 应先备份再编辑，凭据文件权限建议 600。默认 `DATA_DIR=./data`、`PORT=4317`。
+
+## 钉钉登录
+
+产品运行默认采用企业钉钉账号登录。需要在钉钉开发者后台创建企业内部应用，添加 `Contact.User.Read` 个人权限，并登记回调地址：
+
+```text
+http://127.0.0.1:4317/api/auth/dingtalk/callback
+```
+
+复制 `.env.example` 为 `.env`，填写 Client ID、Client Secret 和本企业 Corp ID。首次启动可启用 `DINGTALK_BOOTSTRAP_FIRST_ADMIN=true`，让第一个通过企业校验的员工绑定预置主管；完成初始化后建议改为 `false`。详细步骤及安全边界见 [钉钉登录配置](docs/钉钉登录配置.md)。
+
+浏览器登录使用服务端 OAuth 回调和 HttpOnly 会话。Agent/CLI 不复用员工浏览器会话，使用独立的 `AGENT_API_TOKEN`：
+
+```bash
+export PROJECT_LAB_API_TOKEN='<与服务端 AGENT_API_TOKEN 相同的值>'
+projectctl doctor
+projectctl project list
+```
+
+`AUTH_MODE=development` 只用于隔离开发和自动验收；该模式允许 `x-actor` 模拟身份，不应开放给其他员工。
 
 ## 开始体验
 
@@ -65,7 +86,7 @@ projectctl task submit --id <任务ID>
 projectctl task approve --id <任务ID> --actor supervisor
 ```
 
-CLI 默认角色为 `agent`。预置成员 ID：`supervisor`、`market`、`design`、`operations`、`agent`。新增实际成员用 `projectctl member add --name 姓名`，之后可在页面中分配。
+CLI 默认角色为 `agent`。预置成员 ID：`supervisor`、`market`、`design`、`operations`、`agent`。钉钉登录成功后，员工会自动绑定项目成员；新增非登录成员也可使用 `projectctl member add --name 姓名`。
 
 项目实验台不内置大模型执行器，也不会仅因填写 Skill 名称就自动执行它。真实 Skill 在 Codex、SealSeek 或其他 Agent 宿主中运行，用 CLI 完成项目上下文读取和结果回写。自动执行应遵守原业务 Skill 的授权和验收要求。
 
@@ -107,7 +128,7 @@ projectctl project restore --file 全新备份文件.json
 
 ## 钉钉消息
 
-当前自动生成本地审核和交接通知，可通过页面与 `projectctl notification list` 查看。真实钉钉联动尚未接入；后续通过企业现有官方 `dws` 能力与消息授权流程接入，并确认接收人与发送策略。
+当前自动生成本地审核和交接通知，可通过页面与 `projectctl notification list` 查看。登录阶段已经保存员工的钉钉稳定身份映射；下一步接入工作通知时可按该映射定位接收人，并单独确认应用发消息权限、触发规则与发送策略。
 
 ## NAS / 容器
 
@@ -132,9 +153,10 @@ git push origin main
 npm run check
 npm test
 npm run build
+npm run verify:auth
 npx tsx scripts/verify.ts
 ```
 
-自动验收启动独立 4318 端口服务，使用 `project_lab_verification` 数据库和 `data/verification`；不修改日常 `project_lab` 数据。验收项目保留在独立库中供复查。浏览器截图保存在 `test-results`。
+认证验收使用临时数据库和本地模拟钉钉上游，覆盖 OAuth state、换取令牌、员工资料、企业校验、会话、Agent Token 与退出。完整业务验收启动独立 4318 端口服务，使用 `project_lab_verification` 数据库和 `data/verification`；不修改日常 `project_lab` 数据。验收项目保留在独立库中供复查。浏览器截图保存在 `test-results`。
 
 实施设计见 [实施方案](docs/实施方案.md)，本次测试结果见 [验收记录](docs/验收记录.md)。

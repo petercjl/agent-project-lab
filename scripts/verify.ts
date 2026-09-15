@@ -23,6 +23,7 @@ const server = spawn(process.execPath, ["--import", "tsx", "server.ts"], {
     PORT: "4318",
     DATABASE_URL: "postgresql://localhost:55432/project_lab_verification",
     DATA_DIR: "data/verification",
+    AUTH_MODE: "development",
     DINGTALK_WEBHOOK: "",
     DINGTALK_SECRET: "",
   },

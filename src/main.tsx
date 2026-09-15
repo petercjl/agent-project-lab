@@ -4,7 +4,8 @@ import { marked } from "marked";
 import DOMPurify from "dompurify";
 import "./style.css";
 function App() {
-  const [s, S] = useS<any>(null),
+  const [auth, AUTH] = useS<any>(null),
+    [s, S] = useS<any>(null),
     [pid, P] = useS(""),
     [tab, T] = useS("看板"),
     [actor, A] = useS(localStorage.getItem("actor") || "supervisor"),
@@ -35,6 +36,8 @@ function App() {
             : JSON.stringify(body),
     });
     const j = await r.json();
+    if (r.status === 401)
+      AUTH({ authenticated: false, mode: "dingtalk", configured: true });
     if (!j.ok) throw Error(j.error.message);
     return j.data;
   }
@@ -57,13 +60,23 @@ function App() {
     }
   }
   useE(() => {
-    refresh().catch((e) => E(e.message));
+    fetch("/api/auth/session", { headers: { "x-actor": actor } })
+      .then(async (response) => {
+        const result = await response.json();
+        if (!result.ok) throw Error(result.error.message);
+        AUTH(result.data);
+        if (result.data.authenticated) {
+          if (result.data.memberId) A(result.data.memberId);
+          await refresh();
+        }
+      })
+      .catch((e) => E(e.message));
   }, []);
   useE(() => {
-    if (task || editing) return;
+    if (!auth?.authenticated || task || editing) return;
     const timer = setInterval(() => refresh().catch(() => {}), 5000);
     return () => clearInterval(timer);
-  }, [task, editing]);
+  }, [auth?.authenticated, task, editing]);
   useE(() => {
     localStorage.setItem("actor", actor);
   }, [actor]);
@@ -145,8 +158,44 @@ function App() {
     已阻塞: [["unblock", "解除阻塞"]],
     已完成: [],
   };
-  if (!s)
+  if (auth === null)
     return <div className="loading">项目实验台 · 正在连接本地服务…{error}</div>;
+  if (!auth.authenticated)
+    return (
+      <div className="login-page">
+        <section className="login-card">
+          <div className="hero-icon">◈</div>
+          <small>AGENT PROJECT LAB</small>
+          <h1>登录项目实验台</h1>
+          <p>
+            使用企业钉钉账号完成身份验证。项目负责人、审核权限和任务通知将绑定到同一个员工身份。
+          </p>
+          {new URLSearchParams(location.search).get("authError") && (
+            <div className="error">
+              {new URLSearchParams(location.search).get("authError")}
+            </div>
+          )}
+          {auth.configured ? (
+            <button
+              className="dingtalk-login"
+              onClick={() => location.assign("/api/auth/dingtalk/start")}
+            >
+              使用钉钉账号登录
+            </button>
+          ) : (
+            <div className="auth-setup">
+              钉钉应用尚未配置。请先在本机 <code>.env</code> 中填写 Client
+              ID、Client Secret、Corp ID 和回调地址。
+            </div>
+          )}
+          <p className="login-note">
+            授权仅用于确认企业身份；浏览器不会接触应用密钥。
+          </p>
+        </section>
+      </div>
+    );
+  if (!s)
+    return <div className="loading">身份已验证 · 正在读取项目…{error}</div>;
   return (
     <div className="app">
       <aside>
@@ -157,7 +206,7 @@ function App() {
           </span>
         </div>
         <div className="side-label">
-          工作空间 <span>LOCAL</span>
+          工作空间 <span>{auth.mode === "dingtalk" ? "DINGTALK" : "DEV"}</span>
         </div>
         <button className="new-project" onClick={create}>
           ＋ 创建商品项目
@@ -200,11 +249,11 @@ function App() {
           />
         </label>
         <div className="side-bottom">
-          <i /> 本地服务已连接
+          <i /> {auth.mode === "dingtalk" ? "钉钉身份已验证" : "开发认证模式"}
           <small>
             PostgreSQL · Markdown 文件库
             <br />
-            数据保存在此电脑
+            {auth.mode === "dingtalk" ? auth.name : "数据保存在此电脑"}
           </small>
         </div>
       </aside>
@@ -216,14 +265,36 @@ function App() {
             <p>{p?.goal || "让 Agent 执行工作，让项目沉淀知识。"}</p>
           </div>
           <div className="identity">
-            <small>本地角色模拟</small>
-            <select value={actor} onChange={(e) => A(e.target.value)}>
-              {s.members.map((m: any) => (
-                <option key={m.id} value={m.id}>
-                  {m.name}
-                </option>
-              ))}
-            </select>
+            {auth.mode === "development" ? (
+              <>
+                <small>开发角色模拟</small>
+                <select value={actor} onChange={(e) => A(e.target.value)}>
+                  {s.members.map((m: any) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name}
+                    </option>
+                  ))}
+                </select>
+              </>
+            ) : (
+              <>
+                <span className="signed-user">
+                  {auth.avatarUrl && <img src={auth.avatarUrl} alt="" />}
+                  {auth.name}
+                </span>
+                <button
+                  onClick={async () => {
+                    try {
+                      await api("/auth/logout", "POST", {});
+                    } finally {
+                      location.assign("/");
+                    }
+                  }}
+                >
+                  退出登录
+                </button>
+              </>
+            )}
             <button onClick={() => act(refresh)}>↻ 刷新</button>
           </div>
         </header>

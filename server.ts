@@ -3,6 +3,7 @@ import multer from "multer";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
+import { installAuth, authConfig } from "./auth.ts";
 import {
   init,
   read,
@@ -27,14 +28,16 @@ const app = express();
 app.use(express.json({ limit: "100mb" }));
 app.use("/api", (req, res, next) => {
   const origin = req.headers.origin;
-  if (origin && origin !== `http://${req.headers.host}`)
+  const expectedOrigin = `${req.protocol}://${req.headers.host}`;
+  if (origin && origin !== expectedOrigin)
     return res.status(403).json({
       ok: false,
       error: { code: "ORIGIN", message: "仅允许本站来源" },
     });
   next();
 });
-const actor = (req: any) => String(req.headers["x-actor"] || "supervisor");
+const actor = (req: any) =>
+  String(req.auth?.memberId || req.headers["x-actor"] || "supervisor");
 const get = (arr: any[], id: string, label = "记录") => {
   const v = arr.find((x) => x.id === id);
   if (!v) throw new Fault("NOT_FOUND", `${label}不存在`, 404);
@@ -67,6 +70,7 @@ const route = (method: string, url: string, fn: any) =>
       next(e);
     }
   });
+installAuth(app);
 route("get", "/api/health", async () => {
   await read();
   return {
@@ -101,7 +105,22 @@ route("get", "/api/capabilities", () => ({
     "measurement.add",
   ],
   templates: [{ id: "ecommerce-v1", name: "商品全生命周期", stages }],
-  auth: "本地单用户实验环境；x-actor 是审核角色模拟，不是生产认证",
+  auth:
+    authConfig().mode === "dingtalk"
+      ? {
+          mode: "dingtalk",
+          configured: Boolean(
+            authConfig().clientId &&
+            authConfig().clientSecret &&
+            authConfig().corpId,
+          ),
+          browser: "DingTalk OAuth 2.0 authorization code",
+          agent: authConfig().agentToken ? "bearer-token" : "not-configured",
+        }
+      : {
+          mode: "development",
+          warning: "仅用于自动测试；x-actor 是角色模拟",
+        },
 }));
 route("post", "/api/projects", (req) =>
   mutate(req, async (s: any, who: string) => {
