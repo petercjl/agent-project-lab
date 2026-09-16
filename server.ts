@@ -1464,10 +1464,45 @@ route("get", "/api/v1/trash", async (req: any) => {
   const projectId = String(req.query.projectId || "");
   return (s.deletionBatches || [])
     .filter((item: any) => !projectId || item.projectId === projectId)
-    .map(
-      ({ manifest: _manifest, restoreResult: _restoreResult, ...item }: any) =>
-        item,
-    )
+    .map((item: any) => {
+      const project = s.projects.find(
+        (candidate: any) => candidate.id === item.projectId,
+      );
+      const requestedBy = s.members.find(
+        (candidate: any) => candidate.id === item.requestedBy,
+      );
+      const task = item.manifest?.task || {};
+      const impact = item.manifest?.impact || {};
+      return {
+        id: item.id,
+        projectId: item.projectId,
+        projectName: project?.name || item.projectId,
+        scopeType: item.scopeType,
+        scopeId: item.scopeId,
+        taskTitle: item.taskTitle,
+        taskStage: task.stage || impact.task?.stage || "",
+        taskStatus: task.status || impact.task?.status || "",
+        contentStatus:
+          impact.task?.contentStatus || task.contentStatus || "empty",
+        state: item.state,
+        requestedBy: item.requestedBy,
+        requestedByName: requestedBy?.name || item.requestedBy,
+        createdAt: item.createdAt,
+        updatedAt: item.updatedAt,
+        restoredAt: item.restoredAt || null,
+        restoredBy: item.restoredBy || null,
+        retentionUntil: item.retentionUntil,
+        impact: {
+          files: (item.manifest?.files || []).length,
+          runs: impact.records?.runs || 0,
+          artifacts: impact.records?.artifacts || 0,
+          events: impact.records?.events || 0,
+          notifications: impact.records?.notifications || 0,
+          measurements: impact.records?.measurements || 0,
+          dependents: (impact.dependents || []).length,
+        },
+      };
+    })
     .sort((a: any, b: any) => b.createdAt.localeCompare(a.createdAt));
 });
 route("get", "/api/v1/trash/:deletionId", async (req) => {

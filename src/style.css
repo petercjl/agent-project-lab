@@ -532,6 +532,102 @@ header p {
   min-height: calc(100vh - 132px);
   padding: 28px 32px 48px;
 }
+.trash-page {
+  min-height: calc(100vh - 132px);
+  padding: 28px 32px 48px;
+}
+.trash-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 20px;
+}
+.trash-toolbar > div:first-child {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+.trash-toolbar small {
+  color: #91a0b3;
+}
+.trash-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.trash-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 20px 22px;
+  border: 1px solid #e0e6ee;
+  border-radius: 11px;
+  background: #fff;
+  box-shadow: 0 3px 12px rgb(31 48 71 / 4%);
+}
+.trash-card-main {
+  min-width: 0;
+}
+.trash-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.trash-title-row h2 {
+  margin: 0;
+  font-size: 15px;
+}
+.trash-state,
+.trash-content-tag {
+  padding: 3px 7px;
+  border-radius: 9px;
+  font-size: 9px;
+}
+.trash-state.recoverable {
+  background: #e8f4ee;
+  color: #307457;
+}
+.trash-state.restored {
+  background: #edf0f4;
+  color: #738095;
+}
+.trash-content-tag {
+  background: #fff1db;
+  color: #9b6c22;
+}
+.trash-card-main > p {
+  margin: 10px 0 7px;
+  color: #697a90;
+  font-size: 11px;
+}
+.trash-meta,
+.trash-impact {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 15px;
+  color: #8b98aa;
+  font-size: 10px;
+}
+.trash-impact {
+  margin-top: 10px;
+}
+.trash-impact span {
+  padding: 4px 7px;
+  border-radius: 5px;
+  background: #f3f6fa;
+  color: #6c7e94;
+}
+.trash-card-actions {
+  flex: 0 0 auto;
+  min-width: 96px;
+  text-align: right;
+}
+.trash-empty {
+  margin-top: 12px;
+}
 .home-toolbar {
   display: flex;
   align-items: center;
@@ -1637,6 +1733,26 @@ button.danger:hover {
 .danger-modal > p {
   color: #6e7e91;
   line-height: 1.7;
+}
+.restore-summary {
+  padding: 14px 15px;
+  border: 1px solid #dfe8f2;
+  border-radius: 8px;
+  background: #f5f8fc;
+}
+.restore-summary b {
+  display: block;
+  margin-bottom: 7px;
+  color: #344b69;
+}
+.restore-summary p {
+  margin: 0 0 5px;
+  color: #64778e;
+  font-size: 12px;
+}
+.restore-summary span {
+  color: #8392a5;
+  font-size: 10px;
 }
 @media (max-width: 900px) {
   aside {

@@ -44,6 +44,12 @@ function App() {
     [boardDrag, BOARD_DRAG] = useS<any>(null),
     [boardDrop, BOARD_DROP] = useS<any>(null),
     [homeOpen, HOME_OPEN] = useS(true),
+    [trashOpen, TRASH_OPEN] = useS(false),
+    [trashItems, TRASH_ITEMS] = useS<any[]>([]),
+    [trashFilter, TRASH_FILTER] = useS("completed"),
+    [restoreTarget, RESTORE_TARGET] = useS<any>(null),
+    [restorePreview, RESTORE_PREVIEW] = useS<any>(null),
+    [restoreName, RESTORE_NAME] = useS(""),
     [homeView, HOME_VIEW] = useS(
       localStorage.getItem("project-home-view") || "cards",
     ),
@@ -240,7 +246,68 @@ function App() {
     if (dirty && !confirm("正文尚未保存，确认返回首页？")) return;
     DIR(false);
     D(null);
+    TRASH_OPEN(false);
     HOME_OPEN(true);
+  }
+  async function openTrash() {
+    if (dirty && !confirm("正文尚未保存，确认打开回收站？")) return;
+    DIR(false);
+    D(null);
+    HOME_OPEN(false);
+    TRASH_OPEN(true);
+    BUS(true);
+    E("");
+    try {
+      TRASH_ITEMS(await api("/v1/trash"));
+    } catch (error: any) {
+      E(error.message);
+    } finally {
+      BUS(false);
+    }
+  }
+  async function prepareRestoreTask(item: any) {
+    BUS(true);
+    E("");
+    try {
+      const preview = await api(
+        `/v1/trash/${encodeURIComponent(item.id)}/restore-preview`,
+        "POST",
+        {},
+      );
+      if (!preview.canRestore) {
+        alert(`无法恢复：项目中已存在同名任务“${preview.conflict.title}”。`);
+        return;
+      }
+      RESTORE_TARGET(item);
+      RESTORE_PREVIEW(preview);
+      RESTORE_NAME("");
+    } catch (error: any) {
+      E(error.message);
+    } finally {
+      BUS(false);
+    }
+  }
+  async function confirmRestoreTask() {
+    if (!restoreTarget || restoreName !== restoreTarget.taskTitle) return;
+    BUS(true);
+    E("");
+    try {
+      await api(
+        `/v1/trash/${encodeURIComponent(restoreTarget.id)}/restore`,
+        "POST",
+        { confirmTask: restoreName },
+        { "idempotency-key": crypto.randomUUID() },
+      );
+      await refresh();
+      TRASH_ITEMS(await api("/v1/trash"));
+      RESTORE_TARGET(null);
+      RESTORE_PREVIEW(null);
+      RESTORE_NAME("");
+    } catch (error: any) {
+      E(error.message);
+    } finally {
+      BUS(false);
+    }
   }
   function toggleProjectGroup(groupId: string) {
     COLLAPSED_GROUPS((current) =>
@@ -265,6 +332,7 @@ function App() {
       );
       P(result.project.id);
       HOME_OPEN(false);
+      TRASH_OPEN(false);
       T("看板");
       W("wiki/index.md");
       CREATE(false);
@@ -592,6 +660,7 @@ function App() {
     if (dirty && !confirm("有未保存内容，确认切换？")) return;
     P(project.id);
     HOME_OPEN(false);
+    TRASH_OPEN(false);
     W("wiki/index.md");
     D(null);
     DIR(false);
@@ -732,6 +801,12 @@ function App() {
           onClick={openHome}
         >
           ⌂ <span>项目首页</span>
+        </button>
+        <button
+          className={`home-link ${trashOpen ? "active" : ""}`}
+          onClick={openTrash}
+        >
+          ⌫ <span>回收站</span>
         </button>
         <div className="project-create-actions">
           <button className="new-project" onClick={() => CREATE(true)}>
@@ -923,13 +998,25 @@ function App() {
         <header>
           <div>
             <span className="breadcrumb">
-              {homeOpen ? "工作空间" : "工作空间 / 商品项目"}
+              {homeOpen
+                ? "工作空间"
+                : trashOpen
+                  ? "工作空间 / 回收站"
+                  : "工作空间 / 商品项目"}
             </span>
-            <h1>{homeOpen ? "项目首页" : p?.name || "开始你的第一个项目"}</h1>
+            <h1>
+              {homeOpen
+                ? "项目首页"
+                : trashOpen
+                  ? "回收站"
+                  : p?.name || "开始你的第一个项目"}
+            </h1>
             <p>
               {homeOpen
                 ? `共 ${sortedProjects.length} 个项目，集中查看进度与最新动态。`
-                : p?.goal || "让 Agent 执行工作，让项目沉淀知识。"}
+                : trashOpen
+                  ? "查看已删除任务及其产出，并在保留期内恢复。"
+                  : p?.goal || "让 Agent 执行工作，让项目沉淀知识。"}
             </p>
           </div>
           <div className="identity">
@@ -972,7 +1059,98 @@ function App() {
             <button onClick={() => E("")}>×</button>
           </div>
         )}
-        {homeOpen ? (
+        {trashOpen ? (
+          <section className="trash-page">
+            <div className="trash-toolbar">
+              <div>
+                <b>已删除任务</b>
+                <small>任务、Wiki、历史版本与附件按同一回收记录保留</small>
+              </div>
+              <div className="view-switch" aria-label="回收站筛选">
+                <button
+                  className={trashFilter === "completed" ? "active" : ""}
+                  onClick={() => TRASH_FILTER("completed")}
+                >
+                  待恢复
+                </button>
+                <button
+                  className={trashFilter === "all" ? "active" : ""}
+                  onClick={() => TRASH_FILTER("all")}
+                >
+                  全部记录
+                </button>
+              </div>
+            </div>
+            {trashItems.filter(
+              (item: any) =>
+                trashFilter === "all" || item.state === "completed",
+            ).length ? (
+              <div className="trash-list">
+                {trashItems
+                  .filter(
+                    (item: any) =>
+                      trashFilter === "all" || item.state === "completed",
+                  )
+                  .map((item: any) => (
+                    <article className="trash-card" key={item.id}>
+                      <div className="trash-card-main">
+                        <div className="trash-title-row">
+                          <span
+                            className={`trash-state ${item.state === "completed" ? "recoverable" : "restored"}`}
+                          >
+                            {item.state === "completed" ? "可恢复" : "已恢复"}
+                          </span>
+                          <h2>{item.taskTitle}</h2>
+                          {item.contentStatus !== "empty" && (
+                            <span className="trash-content-tag">
+                              含任务产出
+                            </span>
+                          )}
+                        </div>
+                        <p>
+                          <b>{item.projectName}</b>
+                          {item.taskStage ? ` / ${item.taskStage}` : ""}
+                        </p>
+                        <div className="trash-meta">
+                          <span>删除人：{item.requestedByName}</span>
+                          <span>删除时间：{local(item.createdAt)}</span>
+                          <span>保留至：{local(item.retentionUntil)}</span>
+                        </div>
+                        <div className="trash-impact">
+                          <span>知识库/附件 {item.impact.files}</span>
+                          <span>Agent 运行 {item.impact.runs}</span>
+                          <span>交付物 {item.impact.artifacts}</span>
+                          <span>活动记录 {item.impact.events}</span>
+                          {item.impact.dependents > 0 && (
+                            <span>下游任务 {item.impact.dependents}</span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="trash-card-actions">
+                        {item.state === "completed" ? (
+                          <button
+                            className="primary"
+                            disabled={busy}
+                            onClick={() => prepareRestoreTask(item)}
+                          >
+                            恢复任务
+                          </button>
+                        ) : (
+                          <small>恢复于 {local(item.restoredAt)}</small>
+                        )}
+                      </div>
+                    </article>
+                  ))}
+              </div>
+            ) : (
+              <div className="home-empty trash-empty">
+                <div>⌫</div>
+                <h2>回收站是空的</h2>
+                <p>从任务详情删除的任务会显示在这里。</p>
+              </div>
+            )}
+          </section>
+        ) : homeOpen ? (
           <section className="project-home">
             <div className="home-toolbar">
               <div>
@@ -1972,6 +2150,57 @@ function App() {
                   onClick={removeProject}
                 >
                   确认删除
+                </button>
+              </div>
+            </section>
+          </div>
+        )}
+        {restoreTarget && restorePreview && (
+          <div
+            className="modal-backdrop"
+            onMouseDown={() => RESTORE_TARGET(null)}
+          >
+            <section
+              className="modal compact-modal restore-modal"
+              onMouseDown={(event) => event.stopPropagation()}
+            >
+              <div className="modal-head">
+                <div>
+                  <small>RECOVERABLE RESTORE</small>
+                  <h2>恢复任务</h2>
+                </div>
+                <button onClick={() => RESTORE_TARGET(null)}>×</button>
+              </div>
+              <div className="restore-summary">
+                <b>{restoreTarget.taskTitle}</b>
+                <p>
+                  将恢复到“{restorePreview.project.name}”
+                  {restoreTarget.taskStage
+                    ? ` / ${restoreTarget.taskStage}`
+                    : ""}
+                  。
+                </p>
+                <span>
+                  同时恢复 {restorePreview.files.length} 个知识库/附件文件
+                </span>
+              </div>
+              <label>
+                请输入完整任务名称以确认 <span>*</span>
+                <input
+                  autoFocus
+                  value={restoreName}
+                  onChange={(event) => RESTORE_NAME(event.target.value)}
+                  placeholder={restoreTarget.taskTitle}
+                />
+              </label>
+              <div className="modal-actions">
+                <button onClick={() => RESTORE_TARGET(null)}>取消</button>
+                <button
+                  className="primary"
+                  disabled={busy || restoreName !== restoreTarget.taskTitle}
+                  onClick={confirmRestoreTask}
+                >
+                  确认恢复
                 </button>
               </div>
             </section>
