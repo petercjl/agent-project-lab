@@ -23,6 +23,9 @@ function App() {
     [actor, A] = useS(localStorage.getItem("actor") || "supervisor"),
     [error, E] = useS(""),
     [task, D] = useS<any>(null),
+    [taskExpanded, TASK_EXPANDED] = useS(false),
+    [taskStatusDraft, TASK_STATUS_DRAFT] = useS("待开始"),
+    [taskProgressDraft, TASK_PROGRESS_DRAFT] = useS(0),
     [page, W] = useS("wiki/index.md"),
     [doc, B] = useS<any>(null),
     [editing, ED] = useS(false),
@@ -234,6 +237,8 @@ function App() {
   };
   const local = (v: string) =>
     v ? new Date(v).toLocaleString("zh-CN", { hour12: false }) : "—";
+  const statusLabel = (value: string) =>
+    value === "已完成" ? "完成" : value === "已阻塞" ? "进行中" : value;
   const ready = (t: any) =>
     t.dependencies.every(
       (id: string) =>
@@ -243,6 +248,24 @@ function App() {
     if (dirty && !confirm("正文尚未保存，确认离开？")) return;
     DIR(false);
     T(t);
+  }
+  function openTask(taskToOpen: any) {
+    D(taskToOpen);
+    TASK_EXPANDED(false);
+    TASK_STATUS_DRAFT(
+      taskToOpen.status === "已阻塞" ? "进行中" : taskToOpen.status,
+    );
+    TASK_PROGRESS_DRAFT(
+      taskToOpen.status === "进行中"
+        ? Number(taskToOpen.progress || 0)
+        : taskToOpen.status === "已完成" || taskToOpen.status === "待审核"
+          ? 100
+          : 0,
+    );
+  }
+  function closeTask() {
+    D(null);
+    TASK_EXPANDED(false);
   }
   function openHome() {
     if (dirty && !confirm("正文尚未保存，确认返回首页？")) return;
@@ -1339,7 +1362,7 @@ function App() {
                       tasks.filter((t: any) => t.status === "待审核").length,
                     ],
                     [
-                      "已完成",
+                      "完成",
                       tasks.filter((t: any) => t.status === "已完成").length,
                     ],
                   ].map(([k, v]) => (
@@ -1347,9 +1370,7 @@ function App() {
                       <small>{k}</small>
                       <strong>
                         {v}
-                        <span>
-                          {k === "已完成" ? ` / ${tasks.length}` : ""}
-                        </span>
+                        <span>{k === "完成" ? ` / ${tasks.length}` : ""}</span>
                       </strong>
                     </div>
                   ))}
@@ -1378,9 +1399,11 @@ function App() {
                     <span>依赖驱动交接 · 交付后人工审核</span>
                   </div>
                   <select value={filter} onChange={(e) => F(e.target.value)}>
-                    {["全部", "我的任务", "待审核", "已阻塞"].map((x) => (
-                      <option key={x}>{x}</option>
-                    ))}
+                    {["全部", "我的任务", "进行中", "待审核", "完成"].map(
+                      (x) => (
+                        <option key={x}>{x}</option>
+                      ),
+                    )}
                   </select>
                   <button onClick={createStage}>＋ 添加节点</button>
                 </div>
@@ -1390,6 +1413,7 @@ function App() {
                       (t: any) =>
                         filter === "全部" ||
                         (filter === "我的任务" && t.owner === actor) ||
+                        (filter === "完成" && t.status === "已完成") ||
                         filter === t.status,
                     );
                     return (
@@ -1519,11 +1543,14 @@ function App() {
                                   : "after",
                               );
                             }}
-                            onClick={() => D(t)}
+                            onClick={() => openTask(t)}
                           >
                             <div className="card-top">
                               <span className={"badge status-" + t.status}>
-                                {t.status}
+                                {statusLabel(t.status)}
+                                {t.status === "进行中"
+                                  ? ` ${Number(t.progress || 0)}%`
+                                  : ""}
                               </span>
                               <small>{t.priority}优先级</small>
                             </div>
@@ -1548,6 +1575,15 @@ function App() {
                                     ? `✧ ${t.skill}`
                                     : "人工 / Agent 协作"}
                             </div>
+                            {t.status === "进行中" && (
+                              <div className="task-card-progress">
+                                <progress
+                                  max="100"
+                                  value={Number(t.progress || 0)}
+                                />
+                                <span>{Number(t.progress || 0)}%</span>
+                              </div>
+                            )}
                             <div className="card-footer">
                               <span>
                                 <i className="avatar">
@@ -2274,13 +2310,29 @@ function App() {
         <footer>本地预演环境 · 角色切换用于验证流程，不代表生产权限认证</footer>
       </main>
       {task && (
-        <div className="overlay" onClick={() => D(null)}>
-          <section className="drawer" onClick={(e) => e.stopPropagation()}>
+        <div
+          className={`overlay ${taskExpanded ? "task-overlay-expanded" : ""}`}
+          onClick={closeTask}
+        >
+          <section
+            className={`drawer ${taskExpanded ? "expanded" : ""}`}
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="drawer-head">
               <span>{task.stage} / 任务详情</span>
-              <button onClick={() => D(null)}>关闭 ×</button>
+              <div className="drawer-head-actions">
+                <button onClick={() => TASK_EXPANDED(!taskExpanded)}>
+                  {taskExpanded ? "⊟ 还原" : "⊞ 放大"}
+                </button>
+                <button onClick={closeTask}>关闭 ×</button>
+              </div>
             </div>
-            <span className={"badge status-" + task.status}>{task.status}</span>
+            <span className={"badge status-" + task.status}>
+              {statusLabel(task.status)}
+              {task.status === "进行中"
+                ? ` ${Number(task.progress || 0)}%`
+                : ""}
+            </span>
             <span
               className={`content-state content-${task.contentStatus || "empty"}`}
             >
@@ -2353,6 +2405,49 @@ function App() {
                     ))}
                   </select>
                 </label>
+              </div>
+              <div className="two task-status-fields">
+                <label>
+                  执行状态
+                  <select
+                    name="status"
+                    value={taskStatusDraft}
+                    onChange={(event) => TASK_STATUS_DRAFT(event.target.value)}
+                  >
+                    <option value="待开始">待开始</option>
+                    <option value="进行中">进行中</option>
+                    <option value="待审核">待审核</option>
+                    <option value="已完成">完成</option>
+                  </select>
+                </label>
+                {taskStatusDraft === "进行中" ? (
+                  <label>
+                    执行进度
+                    <div className="progress-editor">
+                      <input
+                        type="range"
+                        min="0"
+                        max="100"
+                        step="1"
+                        value={taskProgressDraft}
+                        onChange={(event) =>
+                          TASK_PROGRESS_DRAFT(Number(event.target.value))
+                        }
+                      />
+                      <output>{taskProgressDraft}%</output>
+                      <input
+                        type="hidden"
+                        name="progress"
+                        value={taskProgressDraft}
+                      />
+                    </div>
+                  </label>
+                ) : (
+                  <label className="status-progress-hint">
+                    执行进度
+                    <span>{taskStatusDraft === "待开始" ? "0%" : "100%"}</span>
+                  </label>
+                )}
               </div>
               <label>
                 工作说明
@@ -2453,7 +2548,7 @@ function App() {
               <div className="error">阻塞原因：{task.blockReason}</div>
             )}
             <div className="task-execution-note">
-              <b>当前执行状态：{task.status}</b>
+              <b>当前执行状态：{statusLabel(task.status)}</b>
               <span>
                 任务由人员填写或 Agent 执行；执行结果、Wiki
                 产出和状态由对应的执行流程更新。
@@ -2468,7 +2563,7 @@ function App() {
               删除任务
             </button>
             <div className="drawer-footer">
-              <button type="button" disabled={busy} onClick={() => D(null)}>
+              <button type="button" disabled={busy} onClick={closeTask}>
                 取消
               </button>
               <button

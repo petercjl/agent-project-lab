@@ -30,6 +30,7 @@ import {
   taskContentStatus,
   projectRenamePlan,
   renameProject,
+  updateTaskExecution,
 } from "./domain.ts";
 const app = express();
 app.use(express.json({ limit: "100mb" }));
@@ -410,6 +411,7 @@ async function createTaskFromPlan(
     title: plan.title,
     stage: plan.stage,
     status: "待开始",
+    progress: 0,
     contentStatus: "empty",
     boardOrder: plan.insertAt,
     owner: plan.owner.id,
@@ -1866,6 +1868,12 @@ route("patch", "/api/tasks/:id", (req) =>
       }
     if ("dependencies" in req.body)
       setDependencies(s, t, req.body.dependencies);
+    if ("status" in req.body || "progress" in req.body)
+      updateTaskExecution(
+        t,
+        req.body.status ?? t.status,
+        req.body.progress ?? t.progress,
+      );
     t.version++;
     audit(s, who, "task.updated", t.projectId, {
       taskId: t.id,

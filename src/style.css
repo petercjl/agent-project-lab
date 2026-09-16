@@ -1449,6 +1449,16 @@ pre {
   padding: 25px 30px;
   box-shadow: -10px 0 40px #13233c20;
 }
+.task-overlay-expanded {
+  left: var(--sidebar-width, 226px);
+}
+.task-overlay-expanded .drawer {
+  width: 100%;
+  max-width: none;
+}
+.app.sidebar-collapsed .task-overlay-expanded {
+  left: 64px;
+}
 .drawer-head {
   display: flex;
   align-items: center;
@@ -1456,6 +1466,10 @@ pre {
   font-size: 11px;
   color: #8c9aac;
   margin-bottom: 28px;
+}
+.drawer-head-actions {
+  display: flex;
+  gap: 8px;
 }
 .drawer h2 {
   margin-top: 17px;
@@ -1483,6 +1497,55 @@ pre {
 }
 .two > label {
   width: 50%;
+}
+.progress-editor {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 38px;
+  margin-top: 6px;
+  padding: 0 10px;
+  border: 1px solid #dde3eb;
+  border-radius: 6px;
+  background: #fff;
+}
+.progress-editor input[type="range"] {
+  flex: 1;
+  width: auto;
+  margin: 0;
+  padding: 0;
+}
+.progress-editor output {
+  min-width: 38px;
+  color: #456b9d;
+  font-weight: 650;
+  text-align: right;
+}
+.status-progress-hint > span {
+  display: flex;
+  align-items: center;
+  min-height: 38px;
+  margin-top: 6px;
+  padding: 0 12px;
+  border: 1px solid #e5e9ef;
+  border-radius: 6px;
+  background: #f6f8fb;
+  color: #8998ac;
+}
+.task-card-progress {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: -8px 0 12px;
+}
+.task-card-progress progress {
+  flex: 1;
+  height: 5px;
+  margin: 0;
+}
+.task-card-progress span {
+  color: #6580a5;
+  font-size: 9px;
 }
 .drawer h3 {
   margin-top: 28px;

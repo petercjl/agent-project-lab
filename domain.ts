@@ -11,6 +11,7 @@ export const stages = [
   "项目完成",
 ];
 export const statuses = ["待开始", "进行中", "待审核", "已完成", "已阻塞"];
+export const editableTaskStatuses = ["待开始", "进行中", "待审核", "已完成"];
 const defaultProductSop = [
   [
     "待立项",
@@ -238,6 +239,7 @@ export function makeProject(s: any, input: any) {
       title: node.name,
       stage: node.stage,
       status: "待开始",
+      progress: 0,
       contentStatus: "empty",
       boardOrder: 0,
       owner: node.owner,
@@ -282,6 +284,21 @@ export function renameProject(s: any, project: any, value: any) {
   project.name = plan.name;
   project.nameKey = plan.nameKey;
   return plan;
+}
+export function updateTaskExecution(task: any, status: any, progress: any) {
+  if (!editableTaskStatuses.includes(status))
+    throw new Fault("VALIDATION", "任务状态必须是待开始、进行中、待审核或完成");
+  const value = Number(progress ?? task.progress ?? 0);
+  if (!Number.isFinite(value) || value < 0 || value > 100)
+    throw new Fault("VALIDATION", "任务进度必须是 0 到 100 的数字");
+  task.status = status;
+  task.progress =
+    status === "待开始" ? 0 : status === "进行中" ? Math.round(value) : 100;
+  if (status === "进行中" && !task.startedAt) task.startedAt = now();
+  if (status === "已完成") task.completedAt ||= now();
+  delete task.blockReason;
+  delete task.previousStatus;
+  return task;
 }
 export function transition(
   s: any,
@@ -346,6 +363,8 @@ export function transition(
   if (action === "start") t.startedAt = now();
   if (action === "approve") t.completedAt = now();
   if (action === "reject") t.reviewNote = reason;
+  if (action === "start") t.progress = Number(t.progress || 0);
+  if (["submit", "approve"].includes(action)) t.progress = 100;
   t.version++;
   t.updatedAt = now();
   if (action === "submit")

@@ -8,6 +8,7 @@ import {
   promoteTaskContent,
   taskContentStatus,
   renameProject,
+  updateTaskExecution,
 } from "../domain.ts";
 function fixture() {
   const s: any = initial();
@@ -94,6 +95,25 @@ test("project rename updates its normalized name and rejects active conflicts", 
   assert.equal(first.nameKey, "新项目");
   assert.throws(() => renameProject(s, first, "已有项目"), {
     code: "PROJECT_NAME_CONFLICT",
+  });
+});
+test("task execution status persists progress only while running", () => {
+  const s = fixture();
+  const task = s.tasks[0];
+  updateTaskExecution(task, "进行中", 38);
+  assert.equal(task.status, "进行中");
+  assert.equal(task.progress, 38);
+  updateTaskExecution(task, "待审核", 38);
+  assert.equal(task.progress, 100);
+  updateTaskExecution(task, "已完成", 20);
+  assert.equal(task.progress, 100);
+  updateTaskExecution(task, "待开始", 80);
+  assert.equal(task.progress, 0);
+  assert.throws(() => updateTaskExecution(task, "进行中", 101), {
+    code: "VALIDATION",
+  });
+  assert.throws(() => updateTaskExecution(task, "已阻塞", 20), {
+    code: "VALIDATION",
   });
 });
 test("shop and company project types remain explicit TODO capabilities", () => {
