@@ -1498,14 +1498,36 @@ pre {
   cursor: pointer;
   text-align: center;
 }
-.task-actions {
+.task-execution-note {
   display: flex;
-  gap: 10px;
-  margin: 26px 0 15px;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 24px;
+  padding: 12px 14px;
+  border-radius: 7px;
+  background: #f4f7fb;
+  color: #718198;
+  font-size: 11px;
+  line-height: 1.6;
+}
+.task-execution-note b {
+  color: #526780;
+}
+.drawer-footer {
   position: sticky;
   bottom: 0;
+  z-index: 2;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin: 24px -30px -25px;
+  padding: 15px 30px;
+  border-top: 1px solid #e8edf3;
   background: white;
-  padding: 15px 0;
+  box-shadow: 0 -8px 20px rgb(24 42 66 / 5%);
+}
+.drawer-footer button {
+  min-width: 92px;
 }
 .danger-outline {
   border-color: #efc8c8;

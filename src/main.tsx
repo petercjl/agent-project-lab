@@ -750,23 +750,6 @@ function App() {
     T("Wiki");
     D(null);
   }
-  const actions: any = {
-    待开始: [
-      ["start", "开始执行"],
-      ["block", "标记阻塞"],
-    ],
-    进行中: [
-      ["submit", "提交审核"],
-      ["block", "标记阻塞"],
-    ],
-    待审核: [
-      ["approve", "审核通过"],
-      ["reject", "退回修改"],
-      ["block", "标记阻塞"],
-    ],
-    已阻塞: [["unblock", "解除阻塞"]],
-    已完成: [],
-  };
   if (auth === null)
     return <div className="loading">项目实验台 · 正在连接本地服务…{error}</div>;
   if (!auth.authenticated)
@@ -2312,17 +2295,19 @@ function App() {
               版本 {task.version} · {task.id}
             </p>
             <form
+              id="task-settings-form"
               key={task.id + "-" + task.version}
-              onSubmit={(e) => {
+              onSubmit={async (e) => {
                 e.preventDefault();
                 const form = new FormData(e.currentTarget);
-                act(() =>
-                  api(`/tasks/${task.id}`, "PATCH", {
+                await act(async () => {
+                  await api(`/tasks/${task.id}`, "PATCH", {
                     ...Object.fromEntries(form),
                     dependencies: form.getAll("dependencies"),
                     version: task.version,
-                  }),
-                );
+                  });
+                  D(null);
+                });
               }}
             >
               <label>
@@ -2405,7 +2390,6 @@ function App() {
                     ))}
                 </select>
               </label>
-              <button disabled={busy}>保存任务信息</button>
             </form>
             <h3>前置依赖</h3>
             {task.dependencies.length ? (
@@ -2468,41 +2452,13 @@ function App() {
             {task.blockReason && task.status === "已阻塞" && (
               <div className="error">阻塞原因：{task.blockReason}</div>
             )}
-            <div className="task-actions">
-              {(actions[task.status] || []).map(([action, label]: string[]) => (
-                <button
-                  className={
-                    ["start", "submit", "approve"].includes(action)
-                      ? "primary"
-                      : ""
-                  }
-                  key={action}
-                  disabled={
-                    busy ||
-                    (["approve", "reject"].includes(action) &&
-                      actor !== task.reviewer)
-                  }
-                  onClick={() =>
-                    act(async () => {
-                      let reason = "";
-                      if (["reject", "block"].includes(action)) {
-                        reason = prompt("请填写原因") || "";
-                        if (!reason) return;
-                      }
-                      await api(`/tasks/${task.id}/actions/${action}`, "POST", {
-                        version: task.version,
-                        reason,
-                      });
-                    })
-                  }
-                >
-                  {label}
-                </button>
-              ))}
+            <div className="task-execution-note">
+              <b>当前执行状态：{task.status}</b>
+              <span>
+                任务由人员填写或 Agent 执行；执行结果、Wiki
+                产出和状态由对应的执行流程更新。
+              </span>
             </div>
-            <small className="muted">
-              提交审核需有正文交付或附件；审核通过后，系统向下一节点负责人生成消息。
-            </small>
             <button
               className="danger-outline delete-task"
               disabled={busy}
@@ -2511,6 +2467,19 @@ function App() {
             >
               删除任务
             </button>
+            <div className="drawer-footer">
+              <button type="button" disabled={busy} onClick={() => D(null)}>
+                取消
+              </button>
+              <button
+                className="primary"
+                type="submit"
+                form="task-settings-form"
+                disabled={busy}
+              >
+                保存
+              </button>
+            </div>
           </section>
         </div>
       )}
