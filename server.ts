@@ -28,6 +28,8 @@ import {
   projectNameKey,
   promoteTaskContent,
   taskContentStatus,
+  projectRenamePlan,
+  renameProject,
 } from "./domain.ts";
 const app = express();
 app.use(express.json({ limit: "100mb" }));
@@ -601,6 +603,7 @@ route("get", "/api/capabilities", () => ({
     "project.create",
     "project.folder.create",
     "project.folder.move",
+    "project.rename",
     "project.directory.reorder",
     "project.pin",
     "project.icon.upload",
@@ -739,6 +742,67 @@ route("patch", "/api/v1/projects/:id/folder", (req) =>
       source: requestSource(req),
     });
     return project;
+  }),
+);
+route("get", "/api/v1/projects/:id/rename-context", async (req) => {
+  const s: any = await read();
+  const project = activeProject(s.projects, req.params.id);
+  return {
+    project: {
+      id: project.id,
+      name: project.name,
+      projectVersion: projectVersion(project),
+    },
+    contextToken: projectContextToken(project),
+  };
+});
+route("post", "/api/v1/projects/:id/rename-preview", async (req) => {
+  const s: any = await read();
+  const project = activeProject(s.projects, req.params.id);
+  requireProjectContext(project, req.body.contextToken);
+  const plan = projectRenamePlan(s, project, req.body.name);
+  const impact = {
+    projectId: project.id,
+    previousName: plan.previousName,
+    name: plan.name,
+  };
+  return {
+    dryRun: true,
+    contextToken: req.body.contextToken,
+    impact,
+    impactHash: impactHash(impact),
+  };
+});
+route("patch", "/api/v1/projects/:id/name", (req) =>
+  mutate(req, (s: any, who: string) => {
+    const project = activeProject(s.projects, req.params.id);
+    requireProjectContext(project, req.body.contextToken);
+    const plan = projectRenamePlan(s, project, req.body.name);
+    const impact = {
+      projectId: project.id,
+      previousName: plan.previousName,
+      name: plan.name,
+    };
+    if (req.body.impactHash !== impactHash(impact))
+      throw new Fault(
+        "RENAME_SCOPE_CHANGED",
+        "项目名称状态已变化，请重新预演",
+        409,
+      );
+    renameProject(s, project, plan.name);
+    audit(s, who, "project.renamed", project.id, {
+      previousName: plan.previousName,
+      name: plan.name,
+      source: requestSource(req),
+    });
+    return {
+      project: {
+        id: project.id,
+        name: project.name,
+        projectVersion: projectVersion(project),
+      },
+      verification: "rename-after-readback",
+    };
   }),
 );
 route("patch", "/api/v1/projects/:id/pin", (req) =>

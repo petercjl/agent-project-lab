@@ -7,6 +7,7 @@ import {
   setDependencies,
   promoteTaskContent,
   taskContentStatus,
+  renameProject,
 } from "../domain.ts";
 function fixture() {
   const s: any = initial();
@@ -82,6 +83,18 @@ test("active project names are unique after normalization", () => {
   });
   s.projects[0].deletedAt = new Date().toISOString();
   assert.doesNotThrow(() => makeProject(s, { name: "ERM 保温杯" }));
+});
+test("project rename updates its normalized name and rejects active conflicts", () => {
+  const s: any = initial();
+  const first = makeProject(s, { name: "原项目" });
+  makeProject(s, { name: "已有项目" });
+  const result = renameProject(s, first, "  新项目  ");
+  assert.equal(result.previousName, "原项目");
+  assert.equal(first.name, "新项目");
+  assert.equal(first.nameKey, "新项目");
+  assert.throws(() => renameProject(s, first, "已有项目"), {
+    code: "PROJECT_NAME_CONFLICT",
+  });
 });
 test("shop and company project types remain explicit TODO capabilities", () => {
   assert.throws(() => makeProject(initial(), { name: "店铺", type: "shop" }), {

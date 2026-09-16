@@ -258,6 +258,31 @@ export function makeProject(s: any, input: any) {
   });
   return p;
 }
+export function projectRenamePlan(s: any, project: any, value: any) {
+  const name = required(value, "项目名称");
+  const nameKey = projectNameKey(name);
+  if (
+    s.projects.some(
+      (item: any) =>
+        !item.deletedAt &&
+        item.id !== project.id &&
+        projectNameKey(item.name) === nameKey,
+    )
+  )
+    throw new Fault("PROJECT_NAME_CONFLICT", `项目名称已存在：${name}`, 409);
+  return {
+    projectId: project.id,
+    previousName: project.name,
+    name,
+    nameKey,
+  };
+}
+export function renameProject(s: any, project: any, value: any) {
+  const plan = projectRenamePlan(s, project, value);
+  project.name = plan.name;
+  project.nameKey = plan.nameKey;
+  return plan;
+}
 export function transition(
   s: any,
   t: any,

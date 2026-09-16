@@ -40,6 +40,8 @@ function App() {
     [deleteTarget, DELETE_TARGET] = useS<any>(null),
     [folderOpen, FOLDER_OPEN] = useS(false),
     [folderName, FOLDER_NAME] = useS(""),
+    [renameTarget, RENAME_TARGET] = useS<any>(null),
+    [renameName, RENAME_NAME] = useS(""),
     [contextMenu, CONTEXT_MENU] = useS<any>(null),
     [boardDrag, BOARD_DRAG] = useS<any>(null),
     [boardDrop, BOARD_DROP] = useS<any>(null),
@@ -579,6 +581,36 @@ function App() {
         { "idempotency-key": crypto.randomUUID() },
       ),
     );
+  }
+  function startRename(project: any) {
+    CONTEXT_MENU(null);
+    RENAME_TARGET(project);
+    RENAME_NAME(project.name);
+  }
+  async function renameSelectedProject() {
+    if (!renameTarget || !renameName.trim()) return;
+    await act(async () => {
+      const context = await api(
+        `/v1/projects/${renameTarget.id}/rename-context`,
+      );
+      const preview = await api(
+        `/v1/projects/${renameTarget.id}/rename-preview`,
+        "POST",
+        { contextToken: context.contextToken, name: renameName },
+      );
+      await api(
+        `/v1/projects/${renameTarget.id}/name`,
+        "PATCH",
+        {
+          contextToken: context.contextToken,
+          impactHash: preview.impactHash,
+          name: renameName,
+        },
+        { "idempotency-key": crypto.randomUUID() },
+      );
+      RENAME_TARGET(null);
+      RENAME_NAME("");
+    });
   }
   function dragItem(event: React.DragEvent) {
     try {
@@ -2002,6 +2034,12 @@ function App() {
                 ⌖&nbsp; {contextMenu.project.pinned ? "取消置顶" : "置顶"}
               </span>
             </button>
+            <button
+              role="menuitem"
+              onClick={() => startRename(contextMenu.project)}
+            >
+              <span>✎&nbsp; 重命名</span>
+            </button>
             <div className="context-divider" />
             <button
               role="menuitem"
@@ -2074,6 +2112,50 @@ function App() {
                   onClick={create}
                 >
                   创建商品项目
+                </button>
+              </div>
+            </section>
+          </div>
+        )}
+        {renameTarget && (
+          <div
+            className="modal-backdrop"
+            onMouseDown={() => RENAME_TARGET(null)}
+          >
+            <section
+              className="modal compact-modal"
+              onMouseDown={(event) => event.stopPropagation()}
+            >
+              <div className="modal-head">
+                <div>
+                  <small>PROJECT NAME</small>
+                  <h2>重命名项目</h2>
+                </div>
+                <button onClick={() => RENAME_TARGET(null)}>×</button>
+              </div>
+              <label>
+                项目名称 <span>*</span>
+                <input
+                  autoFocus
+                  value={renameName}
+                  onChange={(event) => RENAME_NAME(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") renameSelectedProject();
+                  }}
+                />
+              </label>
+              <div className="modal-actions">
+                <button onClick={() => RENAME_TARGET(null)}>取消</button>
+                <button
+                  className="primary"
+                  disabled={
+                    busy ||
+                    !renameName.trim() ||
+                    renameName.trim() === renameTarget.name
+                  }
+                  onClick={renameSelectedProject}
+                >
+                  保存新名称
                 </button>
               </div>
             </section>
