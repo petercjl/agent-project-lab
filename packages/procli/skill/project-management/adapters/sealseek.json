@@ -78,6 +78,89 @@
       "normalization": "Use the procli JSON envelope without reinterpretation."
     },
     {
+      "capability_id": "project.service.node.create",
+      "implementation": {
+        "kind": "stable-cli",
+        "discovery": "Resolve procli from PATH and verify it with procli version and procli capabilities --json.",
+        "execution": "Run node create-context, preview the exact node and position, write with the same context token and idempotency key, and verify by exact-name readback.",
+        "normalization": "Use the procli JSON envelope without reinterpretation."
+      },
+      "features": [
+        "profile_selection",
+        "target_identity_verification",
+        "compact_prewrite_snapshot",
+        "exact_project_resolution",
+        "exact_node_reference_resolution",
+        "server_dry_run",
+        "project_scoped_optimistic_concurrency",
+        "idempotent_write",
+        "production_confirmation",
+        "post_write_readback",
+        "structured_json"
+      ],
+      "status": "implemented",
+      "permissions": [
+        "Network access to the selected service",
+        "Authenticated permission to add a project node"
+      ],
+      "normalization": "Use the procli JSON envelope without reinterpretation."
+    },
+    {
+      "capability_id": "project.service.node.delete",
+      "implementation": {
+        "kind": "stable-cli",
+        "discovery": "Resolve procli from PATH and verify it with procli version and procli capabilities --json.",
+        "execution": "Read and preview the exact node deletion impact, obtain exact-name confirmation, execute recoverable deletion, and verify the node-scoped recycle batch.",
+        "normalization": "Use the procli JSON envelope without reinterpretation."
+      },
+      "features": [
+        "profile_selection",
+        "target_identity_verification",
+        "compact_prewrite_snapshot",
+        "impact_preview",
+        "exact_name_confirmation",
+        "project_scoped_optimistic_concurrency",
+        "dependency_policy",
+        "administrator_content_deletion",
+        "recoverable_archive",
+        "idempotent_write",
+        "production_confirmation",
+        "post_write_readback",
+        "structured_json"
+      ],
+      "status": "implemented",
+      "permissions": [
+        "Network access to the selected service",
+        "Authenticated node deletion permission and administrator permission for content-bearing nodes"
+      ],
+      "normalization": "Use the procli JSON envelope without reinterpretation."
+    },
+    {
+      "capability_id": "project.service.node.restore",
+      "implementation": {
+        "kind": "stable-cli",
+        "discovery": "Resolve procli from PATH and verify it with procli version and procli capabilities --json.",
+        "execution": "Read the node recycle batch, preview conflicts, obtain exact-name confirmation, restore it, and verify the node by exact-name readback.",
+        "normalization": "Use the procli JSON envelope without reinterpretation."
+      },
+      "features": [
+        "profile_selection",
+        "target_identity_verification",
+        "restore_preview",
+        "exact_name_confirmation",
+        "idempotent_write",
+        "production_confirmation",
+        "post_write_readback",
+        "structured_json"
+      ],
+      "status": "implemented",
+      "permissions": [
+        "Network access to the selected service",
+        "Authenticated node restore permission"
+      ],
+      "normalization": "Use the procli JSON envelope without reinterpretation."
+    },
+    {
       "capability_id": "project.service.task.create",
       "implementation": {
         "kind": "stable-cli",

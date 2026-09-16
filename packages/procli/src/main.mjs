@@ -16,7 +16,7 @@ import {
 import { inspectTarget, request } from "./client.mjs";
 import { installSkill, skillSource, skillStatus } from "./skill.mjs";
 
-const VERSION = "0.5.0";
+const VERSION = "0.6.0";
 const help = `procli ${VERSION} — Agent-first project management CLI
 
 Profile（默认 nas）：
@@ -31,6 +31,16 @@ Profile（默认 nas）：
   directory list
   task list --project PROJECT_NAME
   task get --project PROJECT_NAME --task TASK_NAME
+  node create-context --project PROJECT_NAME
+  node create --project PROJECT_NAME --name NODE_NAME --context-token TOKEN
+              [--before-node NODE_NAME | --after-node NODE_NAME]
+              [--idempotency-key KEY] [--dry-run] [--yes]
+  node delete-context --project PROJECT_NAME --node NODE_NAME
+  node delete --project PROJECT_NAME --node NODE_NAME --confirm-node NODE_NAME
+              [--dependency-policy block|detach]
+              [--idempotency-key KEY] [--dry-run] [--yes]
+  node restore --deletion-id ID --confirm-node NODE_NAME
+               [--idempotency-key KEY] [--dry-run] [--yes]
   task create-context --project PROJECT_NAME
   task create --project PROJECT_NAME --node NODE_NAME --title TASK_NAME
               --context-token TOKEN [--description TEXT] [--criteria TEXT]
@@ -225,6 +235,15 @@ async function taskCreateContext(profile, project) {
     await request(
       profile,
       `/api/v1/projects/${encodeURIComponent(project.id)}/task-create-context`,
+    )
+  ).data;
+}
+
+async function nodeCreateContext(profile, project) {
+  return (
+    await request(
+      profile,
+      `/api/v1/projects/${encodeURIComponent(project.id)}/node-create-context`,
     )
   ).data;
 }
@@ -484,6 +503,247 @@ export async function main(argv) {
       `/api/v1/projects/${encodeURIComponent(project.id)}/tasks/resolve/by-name?name=${encodeURIComponent(taskName)}`,
     );
     return output({ target, ...result.data });
+  }
+  if (group === "node" && command === "create-context") {
+    const target = await inspectTarget(profile);
+    const project = await resolveProject(profile, required(options, "project"));
+    const context = await nodeCreateContext(profile, project);
+    return output({ target, ...context });
+  }
+  if (group === "node" && command === "create") {
+    const target = await inspectTarget(profile);
+    const project = await resolveProject(profile, required(options, "project"));
+    const context = await nodeCreateContext(profile, project);
+    const input = {
+      contextToken: required(options, "context-token"),
+      name: required(options, "name"),
+      beforeNode: options["before-node"] || "",
+      afterNode: options["after-node"] || "",
+    };
+    if (input.beforeNode && input.afterNode)
+      throw new CliError(
+        "ARGUMENT",
+        "--before-node 和 --after-node 不能同时使用",
+      );
+    for (const reference of [input.beforeNode, input.afterNode].filter(Boolean))
+      exactNamed(context.nodes, reference, ["name"], "NODE_NOT_FOUND", "节点");
+    const idempotencyKey = options["idempotency-key"] || crypto.randomUUID();
+    let preview;
+    try {
+      preview = await request(
+        profile,
+        `/api/v1/projects/${encodeURIComponent(project.id)}/nodes/preview`,
+        { method: "POST", body: input },
+      );
+    } catch (error) {
+      if (options["dry-run"] || error.code !== "PROJECT_STATE_CHANGED")
+        throw error;
+      preview = null;
+    }
+    if (options["dry-run"])
+      return output({
+        target,
+        idempotencyKey,
+        currentContext: {
+          projectVersion: context.project.projectVersion,
+          contextToken: context.contextToken,
+        },
+        ...preview.data,
+      });
+    if (target.environment === "production" && !options.yes)
+      throw new CliError(
+        "CONFIRMATION_REQUIRED",
+        "目标是生产环境；确认添加节点后请增加 --yes",
+        { target, preview: preview?.data || null },
+      );
+    const created = await request(
+      profile,
+      `/api/v1/projects/${encodeURIComponent(project.id)}/nodes`,
+      { method: "POST", body: input, idempotencyKey },
+    );
+    const readback = await request(
+      profile,
+      `/api/v1/projects/${encodeURIComponent(project.id)}/nodes/by-name?name=${encodeURIComponent(input.name)}`,
+    );
+    if (
+      readback.data.node.name !== created.data.node.name ||
+      readback.data.node.order !== created.data.node.order ||
+      Number(readback.data.project.projectVersion) <
+        Number(created.data.project.projectVersion)
+    )
+      throw new CliError(
+        "OUTPUT_CONTRACT_FAILED",
+        "节点写入后的回读结果与创建结果不一致",
+        { node: input.name },
+      );
+    return output({
+      target,
+      idempotencyKey,
+      project: readback.data.project,
+      node: readback.data.node,
+      audit: created.data.audit,
+      verification: "write-after-readback",
+    });
+  }
+  if (group === "node" && command === "delete-context") {
+    const target = await inspectTarget(profile);
+    const project = await resolveProject(profile, required(options, "project"));
+    const node = required(options, "node");
+    const context = await request(
+      profile,
+      `/api/v1/projects/${encodeURIComponent(project.id)}/nodes/${encodeURIComponent(node)}/delete-context`,
+    );
+    return output({ target, ...context.data });
+  }
+  if (group === "node" && command === "delete") {
+    const target = await inspectTarget(profile);
+    const project = await resolveProject(profile, required(options, "project"));
+    const node = required(options, "node");
+    const context = await request(
+      profile,
+      `/api/v1/projects/${encodeURIComponent(project.id)}/nodes/${encodeURIComponent(node)}/delete-context`,
+    );
+    const dependencyPolicy = options["dependency-policy"] || "block";
+    if (!["block", "detach"].includes(dependencyPolicy))
+      throw new CliError(
+        "ARGUMENT",
+        "--dependency-policy 必须是 block 或 detach",
+      );
+    const preview = await request(
+      profile,
+      `/api/v1/projects/${encodeURIComponent(project.id)}/nodes/${encodeURIComponent(context.data.node.name)}/delete-preview`,
+      {
+        method: "POST",
+        body: {
+          contextToken: context.data.contextToken,
+          dependencyPolicy,
+        },
+      },
+    );
+    const idempotencyKey = options["idempotency-key"] || crypto.randomUUID();
+    if (options["dry-run"])
+      return output({ target, idempotencyKey, ...preview.data });
+    const confirmedNode = required(options, "confirm-node");
+    if (confirmedNode !== context.data.node.name)
+      throw new CliError(
+        "DELETE_CONFIRMATION_MISMATCH",
+        "--confirm-node 必须与当前节点名称完全一致",
+      );
+    if (!preview.data.canDelete)
+      throw new CliError(
+        "DEPENDENTS_EXIST",
+        "其他节点存在下游任务，请明确使用 --dependency-policy detach",
+        { preview: preview.data },
+      );
+    if (
+      preview.data.permissions.requiresAdmin &&
+      !preview.data.permissions.canDeleteWithContent
+    )
+      throw new CliError(
+        "ADMIN_REQUIRED",
+        "节点中包含已有产出的任务，只有管理员可以删除",
+        { preview: preview.data },
+      );
+    if (target.environment === "production" && !options.yes)
+      throw new CliError(
+        "CONFIRMATION_REQUIRED",
+        "目标是生产环境；确认删除节点后请增加 --yes",
+        { target, preview: preview.data },
+      );
+    const deleted = await request(
+      profile,
+      `/api/v1/projects/${encodeURIComponent(project.id)}/nodes/${encodeURIComponent(context.data.node.name)}`,
+      {
+        method: "DELETE",
+        body: {
+          contextToken: context.data.contextToken,
+          impactHash: preview.data.impactHash,
+          confirmNode: confirmedNode,
+          dependencyPolicy,
+        },
+        idempotencyKey,
+      },
+    );
+    const readback = await request(
+      profile,
+      `/api/v1/trash/${encodeURIComponent(deleted.data.deletionId)}`,
+    );
+    if (
+      readback.data.id !== deleted.data.deletionId ||
+      readback.data.scopeType !== "node" ||
+      readback.data.state !== "completed"
+    )
+      throw new CliError(
+        "OUTPUT_CONTRACT_FAILED",
+        "节点删除后的回收记录与请求不一致",
+        { deletionId: deleted.data.deletionId },
+      );
+    return output({
+      target,
+      idempotencyKey,
+      ...deleted.data,
+      verification: "delete-after-readback",
+    });
+  }
+  if (group === "node" && command === "restore") {
+    const target = await inspectTarget(profile);
+    const deletionId = required(options, "deletion-id");
+    const batch = await request(
+      profile,
+      `/api/v1/trash/${encodeURIComponent(deletionId)}`,
+    );
+    if (batch.data.scopeType !== "node")
+      throw new CliError(
+        "RESTORE_SCOPE_MISMATCH",
+        "该回收记录不是节点删除记录",
+      );
+    const preview = await request(
+      profile,
+      `/api/v1/trash/${encodeURIComponent(deletionId)}/restore-preview`,
+      { method: "POST", body: {} },
+    );
+    const idempotencyKey = options["idempotency-key"] || crypto.randomUUID();
+    if (options["dry-run"])
+      return output({ target, idempotencyKey, ...preview.data });
+    const confirmedNode = required(options, "confirm-node");
+    if (confirmedNode !== batch.data.nodeName)
+      throw new CliError(
+        "RESTORE_CONFIRMATION_MISMATCH",
+        "--confirm-node 必须与回收记录中的节点名称完全一致",
+      );
+    if (!preview.data.canRestore)
+      throw new CliError("RESTORE_CONFLICT", "当前节点存在恢复冲突", {
+        preview: preview.data,
+      });
+    if (target.environment === "production" && !options.yes)
+      throw new CliError(
+        "CONFIRMATION_REQUIRED",
+        "目标是生产环境；确认恢复节点后请增加 --yes",
+        { target, preview: preview.data },
+      );
+    const restored = await request(
+      profile,
+      `/api/v1/trash/${encodeURIComponent(deletionId)}/restore`,
+      {
+        method: "POST",
+        body: { confirmNode: confirmedNode },
+        idempotencyKey,
+      },
+    );
+    const readback = await request(
+      profile,
+      `/api/v1/projects/${encodeURIComponent(restored.data.project.id)}/nodes/by-name?name=${encodeURIComponent(restored.data.node.name)}`,
+    );
+    if (readback.data.node.name !== restored.data.node.name)
+      throw new CliError("OUTPUT_CONTRACT_FAILED", "恢复后的节点回读失败", {
+        deletionId,
+      });
+    return output({
+      target,
+      idempotencyKey,
+      ...restored.data,
+      verification: "restore-after-readback",
+    });
   }
   if (group === "task" && command === "create-context") {
     const target = await inspectTarget(profile);

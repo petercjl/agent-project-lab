@@ -1,6 +1,6 @@
 ---
 name: project-management
-description: Read and operate projects through procli, including natural-language project/task matching, directory and task inspection, concurrency-safe task creation, recoverable task deletion and restoration, project creation, administrator deletion, and local/NAS target selection. Invoke this Skill only when the user's request explicitly contains the keyword "procli" or explicitly asks to use procli.
+description: Read and operate projects through procli, including natural-language project/task/node matching, directory and task inspection, concurrency-safe node and task creation, recoverable node/task deletion and restoration, project creation, administrator deletion, and local/NAS target selection. Invoke this Skill only when the user's request explicitly contains the keyword "procli" or explicitly asks to use procli.
 ---
 
 # Project Management
@@ -9,7 +9,7 @@ Use the bundled `procli` executable as the only execution surface. Load the curr
 
 `procli` is the global explicit trigger word for this Skill. When it appears as the requested project-operation tool, route here even if the user does not mention the Skill name. Infer the operation and structured inputs from the surrounding natural language, then follow the matching main line.
 
-The logical capabilities are `project.service.directory.list`, `project.service.task.list`, `project.service.task.read`, `project.service.task.create`, `project.service.task.delete`, `project.service.trash.list`, `project.service.task.restore`, `project.service.project.create`, and `project.service.project.delete`. If the matching adapter mapping is unresolved or unsupported, return `CAPABILITY_UNAVAILABLE`.
+The logical capabilities are `project.service.directory.list`, `project.service.task.list`, `project.service.task.read`, `project.service.node.create`, `project.service.node.delete`, `project.service.node.restore`, `project.service.task.create`, `project.service.task.delete`, `project.service.trash.list`, `project.service.task.restore`, `project.service.project.create`, and `project.service.project.delete`. If the matching adapter mapping is unresolved or unsupported, return `CAPABILITY_UNAVAILABLE`.
 
 ## Contract
 
@@ -98,6 +98,67 @@ Task creation is a state-dependent write. The web workspace and `procli` may bot
 5. Check the preview's target, exact project/node, title, people, dependencies, and insertion position. The user's instruction to add the task authorizes the matching local write. Production additionally requires `--yes`.
 6. Execute the identical command without `--dry-run`, preserving the context token and idempotency key. Accept success only when the CLI returns `verification=write-after-readback`, the created task ID, the expected exact project/node/title, and an advanced project version.
 7. On `PROJECT_STATE_CHANGED`, do not retry the write immediately. Return to Step 1 and obtain a new context. If the change affects uniqueness, target resolution, dependency, owner, or insertion position, show the changed candidates and ask the user; otherwise rebuild the preview with the same logical intent and idempotency key.
+
+## Add a board node
+
+A node is one board stage/column, not a task inside that column.
+
+1. Resolve the exact project through the read-only natural-language flow and read the authoritative compact context immediately before composing the write:
+
+   ```bash
+   procli node create-context --project "<exact project name>" --json
+   ```
+
+2. The node name is required and must be unique within the project. Resolve a requested before/after position against the returned exact node names. With no position request, append the node to the project end. Ask one concise question only when the target project, node name, or position remains materially ambiguous.
+3. Generate one UUID and preview with the returned token:
+
+   ```bash
+   procli node create --project "<project>" --name "<node>" \
+     --after-node "<reference node>" --context-token "<token>" \
+     --idempotency-key "<uuid>" --dry-run --json
+   ```
+
+   Omit `--before-node` and `--after-node` when appending.
+
+4. Check the exact project, node name, insertion order, reference node, Profile, and environment. The user's instruction to add the node authorizes the matching local write; production additionally requires `--yes`.
+5. Execute the identical command without `--dry-run`. Accept success only with the expected exact node name and order, an advanced project version, and `verification=write-after-readback`.
+6. On `PROJECT_STATE_CHANGED`, obtain a fresh context. If node names or the requested position changed, ask the user to disambiguate; otherwise rebuild the preview with the same logical intent and idempotency key.
+
+## Recoverably delete a board node
+
+Node deletion always requires a fresh impact preview and explicit exact-name confirmation. It archives the node, its tasks, Wiki files, artifacts, execution records, and related metadata as one recycle batch.
+
+1. Resolve the exact project and node using current procli results, then read the deletion context:
+
+   ```bash
+   procli node delete-context --project "<project>" --node "<node>" --json
+   ```
+
+2. Preview with dependency policy `block` by default:
+
+   ```bash
+   procli node delete --project "<project>" --node "<node>" \
+     --confirm-node "<exact node>" --dependency-policy block \
+     --dry-run --json
+   ```
+
+   Show the node order, task count, content-bearing task count, Wiki/file and record counts, external dependents, permission requirement, recoverability, and 90-day retention.
+
+3. If tasks in other nodes depend on tasks being deleted, ask whether to cancel or explicitly detach those dependencies. Use `--dependency-policy detach` only after that choice; never detach silently. Node deletion does not guess a replacement task.
+4. Obtain explicit confirmation naming the exact node. Empty nodes and nodes containing only empty tasks may be deleted by ordinary authenticated users. A node containing Agent execution or substantive output requires administrator authorization. The project must retain at least one node. Production additionally requires `--yes`.
+5. Execute the same command without `--dry-run`, preserving one idempotency key. Accept success only with `scopeType=node`, a `deletionId`, completed manifest, task count, retention time, advanced project version, and `delete-after-readback` verification.
+6. On `PROJECT_STATE_CHANGED` or `DELETE_SCOPE_CHANGED`, restart from Step 1 and obtain a new confirmation for the changed impact.
+
+## Restore a board node
+
+Read the node-scoped recycle record and preview conflicts before restoration:
+
+```bash
+procli node restore --deletion-id "<id>" --confirm-node "<exact node>" \
+  --dry-run --json
+```
+
+Show same-name node, same-name task, and file conflicts. After exact-name confirmation, execute the same command with one idempotency key; production additionally requires `--yes`. Accept success only when the original node name, tasks, files, records, and available dependencies are restored, the node is verified by exact-name readback, and `verification=restore-after-readback`. Report warnings for downstream tasks or dependencies that no longer exist.
 
 ## Create a product project
 
@@ -196,11 +257,15 @@ Deletion is a recoverable soft delete, but it is a high-risk administrator actio
 - `CONTEXT_TOKEN_REQUIRED`: return to task creation Step 1 and obtain a current context token.
 - `PROJECT_STATE_CHANGED`: return to task creation Step 1; never write with the stale token.
 - `TASK_NAME_CONFLICT`: ask for a distinct project-wide task title.
+- `STAGE_NAME_CONFLICT`: ask for a distinct project-wide node name.
+- `POSITION_NODE_INVALID`: show the exact current nodes and ask for a valid before/after location.
+- `LAST_NODE_REQUIRED`: explain that every project must retain at least one node and stop.
 - `DEPENDENTS_EXIST`: show the exact dependents and ask the user to cancel, detach, or rewire; never choose a destructive policy automatically.
 - `DELETE_SCOPE_CHANGED`: restart the deletion context and preview flow, then request confirmation for the changed impact.
 - `DELETE_CONFIRMATION_MISMATCH`: request the exact current task title and rebuild the preview.
 - `RESTORE_CONFIRMATION_MISMATCH`: request the exact task title stored in the deletion manifest.
 - `RESTORE_CONFLICT`: report the active task or file conflict and stop without overwriting or renaming.
+- `RESTORE_SCOPE_MISMATCH`: report that the selected recycle record is not a node deletion record.
 - `INVALID_RESTORE_STATE`: report the real recycle state and stop.
 - `FEATURE_UNSUPPORTED` during deletion: the content Provider has no verified archive-and-restore contract; stop without mutation.
 - `NODE_NOT_FOUND`, `MEMBER_NOT_FOUND`, `MEMBER_AMBIGUOUS`, `INVALID_DEPENDENCY`, or `POSITION_TASK_INVALID`: show the exact current candidates from a fresh creation context and ask one concise clarification question.
@@ -209,6 +274,6 @@ Deletion is a recoverable soft delete, but it is a high-risk administrator actio
 
 ## Output contract
 
-For directory reads, report folder/project counts and the requested structured listing. For task lists, report the project identity, task count, and all nodes. For task detail, report the current status plus all returned history and related record groups. For task creation, report the task ID/title, exact project/node, target Profile/environment, owner, placement, resulting project version, and write-after-readback verification. For recoverable task deletion, report the exact project/task, dependency policy, `deletionId`, manifest, retention time, project version, target, and verification. For restoration, report the original task ID, deletion ID, warnings, project version, target, and verification. For project creation, report the project name and ID, target Profile/environment, SOP mode, task count, Wiki count, and verification. For project deletion, report the exact project name and ID, deletion time, actor, recoverable status, target, and verification. Never expose credentials or local token storage.
+For directory reads, report folder/project counts and the requested structured listing. For task lists, report the project identity, task count, and all nodes. For task detail, report the current status plus all returned history and related record groups. For node creation, report the exact project/node, order, target Profile/environment, resulting project version, and write-after-readback verification. For recoverable node deletion, report the node, task/content counts, dependency policy, `deletionId`, manifest, retention, project version, target, and verification. For node restoration, report the node, restored task count, warnings, project version, target, and verification. For task creation, report the task ID/title, exact project/node, target Profile/environment, owner, placement, resulting project version, and write-after-readback verification. For recoverable task deletion, report the exact project/task, dependency policy, `deletionId`, manifest, retention time, project version, target, and verification. For task restoration, report the original task ID, deletion ID, warnings, project version, target, and verification. For project creation, report the project name and ID, target Profile/environment, SOP mode, task count, Wiki count, and verification. For project deletion, report the exact project name and ID, deletion time, actor, recoverable status, target, and verification. Never expose credentials or local token storage.
 
 After a reported execution failure, preserve the failed command, structured error code, and target metadata for a separately authorized plugin update. Runtime execution must not edit this Skill or its adapters.

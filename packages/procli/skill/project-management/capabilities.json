@@ -86,6 +86,150 @@
       ]
     },
     {
+      "id": "project.service.node.create",
+      "purpose": "Create and position one project board node from a compact current project snapshot",
+      "required": true,
+      "required_features": [
+        "profile_selection",
+        "target_identity_verification",
+        "compact_prewrite_snapshot",
+        "exact_project_resolution",
+        "exact_node_reference_resolution",
+        "server_dry_run",
+        "project_scoped_optimistic_concurrency",
+        "idempotent_write",
+        "production_confirmation",
+        "post_write_readback",
+        "structured_json"
+      ],
+      "input_fields": [
+        "profile",
+        "project",
+        "name",
+        "before_node",
+        "after_node",
+        "context_token",
+        "idempotency_key"
+      ],
+      "output_fields": [
+        "target",
+        "project",
+        "node",
+        "project_version",
+        "verification"
+      ],
+      "side_effects": {
+        "external_mutation": true,
+        "may_cost_money": false,
+        "authorization": "The user must explicitly intend to add the node. A fresh project context and server preview are required; production additionally requires CLI confirmation."
+      },
+      "errors": [
+        "AUTH_REQUIRED",
+        "CONTEXT_TOKEN_REQUIRED",
+        "PROJECT_STATE_CHANGED",
+        "STAGE_NAME_CONFLICT",
+        "POSITION_NODE_INVALID",
+        "CONFIRMATION_REQUIRED",
+        "OUTPUT_CONTRACT_FAILED"
+      ]
+    },
+    {
+      "id": "project.service.node.delete",
+      "purpose": "Preview and recoverably delete one project board node and its tasks, knowledge files, and records",
+      "required": true,
+      "required_features": [
+        "profile_selection",
+        "target_identity_verification",
+        "compact_prewrite_snapshot",
+        "impact_preview",
+        "exact_name_confirmation",
+        "project_scoped_optimistic_concurrency",
+        "dependency_policy",
+        "administrator_content_deletion",
+        "recoverable_archive",
+        "idempotent_write",
+        "production_confirmation",
+        "post_write_readback",
+        "structured_json"
+      ],
+      "input_fields": [
+        "profile",
+        "project",
+        "node",
+        "confirm_node",
+        "dependency_policy",
+        "idempotency_key"
+      ],
+      "output_fields": [
+        "target",
+        "deletion_id",
+        "project",
+        "node",
+        "task_count",
+        "manifest_path",
+        "retention_until",
+        "verification"
+      ],
+      "side_effects": {
+        "external_mutation": true,
+        "may_cost_money": false,
+        "authorization": "The user must review the current node impact and explicitly confirm its exact name. Content-bearing nodes require administrator authorization; production additionally requires CLI confirmation."
+      },
+      "errors": [
+        "AUTH_REQUIRED",
+        "DELETE_CONFIRMATION_MISMATCH",
+        "DEPENDENTS_EXIST",
+        "LAST_NODE_REQUIRED",
+        "PROJECT_STATE_CHANGED",
+        "DELETE_SCOPE_CHANGED",
+        "ADMIN_REQUIRED",
+        "OUTPUT_CONTRACT_FAILED"
+      ]
+    },
+    {
+      "id": "project.service.node.restore",
+      "purpose": "Preview and restore one recoverably deleted project board node from its deletion manifest",
+      "required": true,
+      "required_features": [
+        "profile_selection",
+        "target_identity_verification",
+        "restore_preview",
+        "exact_name_confirmation",
+        "idempotent_write",
+        "production_confirmation",
+        "post_write_readback",
+        "structured_json"
+      ],
+      "input_fields": [
+        "profile",
+        "deletion_id",
+        "confirm_node",
+        "idempotency_key"
+      ],
+      "output_fields": [
+        "target",
+        "deletion_id",
+        "project",
+        "node",
+        "warnings",
+        "verification"
+      ],
+      "side_effects": {
+        "external_mutation": true,
+        "may_cost_money": false,
+        "authorization": "The user must review the restore preview and explicitly confirm the exact node name; production additionally requires CLI confirmation."
+      },
+      "errors": [
+        "AUTH_REQUIRED",
+        "RESTORE_SCOPE_MISMATCH",
+        "RESTORE_CONFIRMATION_MISMATCH",
+        "RESTORE_CONFLICT",
+        "INVALID_RESTORE_STATE",
+        "FILE_INTEGRITY",
+        "OUTPUT_CONTRACT_FAILED"
+      ]
+    },
+    {
       "id": "project.service.task.create",
       "purpose": "Create one task from a compact current project snapshot with server preview, project-scoped optimistic concurrency, and post-write verification",
       "required": true,

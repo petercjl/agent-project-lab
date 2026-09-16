@@ -31,12 +31,17 @@ async function mockService(environment) {
   let taskCreates = 0;
   let taskDeletes = 0;
   let taskRestores = 0;
+  let nodeCreates = 0;
+  let nodeDeletes = 0;
+  let nodeRestores = 0;
   let deletes = 0;
   let deleted = false;
   let lastCreateBody;
   let lastTaskBody;
   let lastTaskResult;
   let projectVersion = 4;
+  let nodes = ["待立项", "市场调研"];
+  let deletedNodeBatch = null;
   const contextToken = () => `context-${projectVersion}`;
   const server = http.createServer((req, res) => {
     res.setHeader("content-type", "application/json");
@@ -145,6 +150,225 @@ async function mockService(environment) {
           },
         }),
       );
+    if (
+      req.url === "/api/v1/projects/project-1/node-create-context" &&
+      req.method === "GET"
+    )
+      return res.end(
+        JSON.stringify({
+          ok: true,
+          data: {
+            project: {
+              id: "project-1",
+              name: "Test",
+              type: "product",
+              status: "active",
+              projectVersion,
+            },
+            contextToken: contextToken(),
+            nodes: nodes.map((name, order) => ({
+              name,
+              order,
+              taskCount: name === "市场调研" ? 1 : 0,
+              contentTaskCount: name === "市场调研" ? 1 : 0,
+            })),
+            constraints: {
+              maxNodes: 50,
+              minNodes: 1,
+              nodeNameUnique: true,
+              defaultPosition: "project-end",
+            },
+          },
+        }),
+      );
+    if (
+      req.url === "/api/v1/projects/project-1/nodes/preview" &&
+      req.method === "POST"
+    ) {
+      let raw = "";
+      req.on("data", (chunk) => (raw += chunk));
+      return req.on("end", () => {
+        const body = JSON.parse(raw);
+        if (body.contextToken !== contextToken()) {
+          res.statusCode = 409;
+          return res.end(
+            JSON.stringify({
+              ok: false,
+              error: {
+                code: "PROJECT_STATE_CHANGED",
+                message: "state changed",
+              },
+            }),
+          );
+        }
+        const reference = body.beforeNode || body.afterNode;
+        const referenceIndex = reference ? nodes.indexOf(reference) : -1;
+        const order = reference
+          ? referenceIndex + (body.afterNode ? 1 : 0)
+          : nodes.length;
+        res.end(
+          JSON.stringify({
+            ok: true,
+            data: {
+              dryRun: true,
+              contextToken: body.contextToken,
+              project: { id: "project-1", name: "Test", projectVersion },
+              node: {
+                name: body.name,
+                order,
+                position: body.beforeNode
+                  ? "before"
+                  : body.afterNode
+                    ? "after"
+                    : "append",
+                referenceNode: reference || null,
+                taskCount: 0,
+              },
+            },
+          }),
+        );
+      });
+    }
+    if (
+      req.url === "/api/v1/projects/project-1/nodes" &&
+      req.method === "POST"
+    ) {
+      let raw = "";
+      req.on("data", (chunk) => (raw += chunk));
+      return req.on("end", () => {
+        const body = JSON.parse(raw);
+        nodeCreates++;
+        const reference = body.beforeNode || body.afterNode;
+        const referenceIndex = reference ? nodes.indexOf(reference) : -1;
+        const order = reference
+          ? referenceIndex + (body.afterNode ? 1 : 0)
+          : nodes.length;
+        nodes.splice(order, 0, body.name);
+        projectVersion++;
+        res.end(
+          JSON.stringify({
+            ok: true,
+            data: {
+              project: { id: "project-1", name: "Test", projectVersion },
+              node: { name: body.name, order, taskCount: 0 },
+              audit: { event: "node.created" },
+            },
+          }),
+        );
+      });
+    }
+    if (
+      req.url?.startsWith("/api/v1/projects/project-1/nodes/by-name?") &&
+      req.method === "GET"
+    ) {
+      const name = decodeURIComponent(
+        new URL(req.url, "http://test").searchParams.get("name"),
+      );
+      const order = nodes.indexOf(name);
+      if (order < 0) {
+        res.statusCode = 404;
+        return res.end(
+          JSON.stringify({
+            ok: false,
+            error: { code: "NODE_NOT_FOUND", message: "not found" },
+          }),
+        );
+      }
+      return res.end(
+        JSON.stringify({
+          ok: true,
+          data: {
+            project: { id: "project-1", name: "Test", projectVersion },
+            node: { name, order, taskCount: name === "市场调研" ? 1 : 0 },
+          },
+        }),
+      );
+    }
+    if (
+      req.url?.includes("/nodes/") &&
+      req.url?.endsWith("/delete-context") &&
+      req.method === "GET"
+    ) {
+      const encoded = req.url.split("/nodes/")[1].split("/delete-context")[0];
+      const name = decodeURIComponent(encoded);
+      return res.end(
+        JSON.stringify({
+          ok: true,
+          data: {
+            project: { id: "project-1", name: "Test", projectVersion },
+            node: {
+              name,
+              order: nodes.indexOf(name),
+              taskCount: name === "市场调研" ? 1 : 0,
+              contentTaskCount: name === "市场调研" ? 1 : 0,
+            },
+            contextToken: contextToken(),
+            permissions: {
+              canDeleteEmpty: true,
+              canDeleteWithContent: true,
+              systemRole: "admin",
+            },
+            impactHash: `node-impact-${projectVersion}`,
+            impact: {
+              node: { name, taskCount: name === "市场调研" ? 1 : 0 },
+              dependents: [],
+              files: name === "市场调研" ? [{ path: "wiki/market.md" }] : [],
+              retentionDays: 90,
+            },
+          },
+        }),
+      );
+    }
+    if (
+      req.url?.includes("/nodes/") &&
+      req.url?.endsWith("/delete-preview") &&
+      req.method === "POST"
+    )
+      return res.end(
+        JSON.stringify({
+          ok: true,
+          data: {
+            dryRun: true,
+            contextToken: contextToken(),
+            impactHash: `node-impact-${projectVersion}`,
+            canDelete: true,
+            permissions: { requiresAdmin: false, canDeleteWithContent: true },
+            impact: { node: { taskCount: 0 }, dependents: [], files: [] },
+          },
+        }),
+      );
+    if (req.url?.includes("/nodes/") && req.method === "DELETE") {
+      const name = decodeURIComponent(req.url.split("/nodes/")[1]);
+      nodeDeletes++;
+      const order = nodes.indexOf(name);
+      nodes = nodes.filter((node) => node !== name);
+      projectVersion++;
+      deletedNodeBatch = {
+        id: "deletion-node-1",
+        scopeType: "node",
+        nodeName: name,
+        state: "completed",
+        manifest: {
+          node: { name, order },
+          tasks: [],
+          files: [],
+        },
+      };
+      return res.end(
+        JSON.stringify({
+          ok: true,
+          data: {
+            deletionId: deletedNodeBatch.id,
+            state: "completed",
+            project: { id: "project-1", name: "Test", projectVersion },
+            node: { name, order },
+            taskCount: 0,
+            manifestPath: "wiki/recycle/deletion-node-1/manifest.json",
+            retentionUntil: "2026-12-15T00:00:00.000Z",
+          },
+        }),
+      );
+    }
     if (req.url === "/api/v1/projects/project-1/tasks" && req.method === "GET")
       return res.end(
         JSON.stringify({
@@ -419,6 +643,68 @@ async function mockService(environment) {
           ],
         }),
       );
+    if (req.url === "/api/v1/trash/deletion-node-1" && req.method === "GET")
+      return res.end(
+        JSON.stringify({
+          ok: true,
+          data: deletedNodeBatch || {
+            id: "deletion-node-1",
+            scopeType: "node",
+            nodeName: "渠道测试",
+            state: "completed",
+            manifest: {
+              node: { name: "渠道测试", order: 1 },
+              tasks: [],
+              files: [],
+            },
+          },
+        }),
+      );
+    if (
+      req.url === "/api/v1/trash/deletion-node-1/restore-preview" &&
+      req.method === "POST"
+    )
+      return res.end(
+        JSON.stringify({
+          ok: true,
+          data: {
+            dryRun: true,
+            deletionId: "deletion-node-1",
+            project: { id: "project-1", name: "Test" },
+            node: {
+              name: deletedNodeBatch.nodeName,
+              order: deletedNodeBatch.manifest.node.order,
+              taskCount: 0,
+            },
+            canRestore: true,
+            conflict: null,
+            files: [],
+          },
+        }),
+      );
+    if (
+      req.url === "/api/v1/trash/deletion-node-1/restore" &&
+      req.method === "POST"
+    ) {
+      nodeRestores++;
+      const name = deletedNodeBatch.nodeName;
+      const order = deletedNodeBatch.manifest.node.order;
+      nodes.splice(Math.min(order, nodes.length), 0, name);
+      projectVersion++;
+      deletedNodeBatch.state = "restored";
+      return res.end(
+        JSON.stringify({
+          ok: true,
+          data: {
+            deletionId: "deletion-node-1",
+            state: "restored",
+            project: { id: "project-1", name: "Test", projectVersion },
+            node: { name, order, taskCount: 0 },
+            warnings: [],
+          },
+        }),
+      );
+    }
     if (req.url === "/api/v1/trash/deletion-1" && req.method === "GET")
       return res.end(
         JSON.stringify({
@@ -530,6 +816,9 @@ async function mockService(environment) {
     taskCreates: () => taskCreates,
     taskDeletes: () => taskDeletes,
     taskRestores: () => taskRestores,
+    nodeCreates: () => nodeCreates,
+    nodeDeletes: () => nodeDeletes,
+    nodeRestores: () => nodeRestores,
     deletes: () => deletes,
     lastCreateBody: () => lastCreateBody,
     lastTaskBody: () => lastTaskBody,
@@ -814,6 +1103,168 @@ test("custom SOP creation validates and sends node names with descriptions", asy
   assert.equal(created.code, 0);
   assert.equal(created.json.data.tasks.count, 2);
   assert.equal(mock.lastCreateBody().sop.nodes[1].description, "形成评审结论");
+});
+
+test("node creation, recoverable deletion, and restoration use current project state", async (t) => {
+  const mock = await mockService("development");
+  t.after(() => mock.server.close());
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), "procli-node-"));
+  t.after(() => fs.rm(home, { recursive: true, force: true }));
+  const env = { PROCLI_CONFIG_PATH: path.join(home, "config.json") };
+  await run(
+    [
+      "profile",
+      "add",
+      "local",
+      "--url",
+      mock.url,
+      "--environment",
+      "development",
+    ],
+    env,
+  );
+  await run(["profile", "use", "local"], env);
+
+  const context = await run(
+    ["node", "create-context", "--project", "Test"],
+    env,
+  );
+  assert.equal(context.code, 0);
+  assert.equal(context.json.data.contextToken, "context-4");
+  assert.equal(context.json.data.nodes[1].name, "市场调研");
+
+  const preview = await run(
+    [
+      "node",
+      "create",
+      "--project",
+      "Test",
+      "--name",
+      "渠道测试",
+      "--after-node",
+      "待立项",
+      "--context-token",
+      "context-4",
+      "--idempotency-key",
+      "node-create-key",
+      "--dry-run",
+    ],
+    env,
+  );
+  assert.equal(preview.code, 0);
+  assert.equal(preview.json.data.node.order, 1);
+  assert.equal(mock.nodeCreates(), 0);
+
+  const created = await run(
+    [
+      "node",
+      "create",
+      "--project",
+      "Test",
+      "--name",
+      "渠道测试",
+      "--after-node",
+      "待立项",
+      "--context-token",
+      "context-4",
+      "--idempotency-key",
+      "node-create-key",
+    ],
+    env,
+  );
+  assert.equal(created.code, 0);
+  assert.equal(created.json.data.node.name, "渠道测试");
+  assert.equal(created.json.data.node.order, 1);
+  assert.equal(created.json.data.verification, "write-after-readback");
+  assert.equal(mock.nodeCreates(), 1);
+
+  const stale = await run(
+    [
+      "node",
+      "create",
+      "--project",
+      "Test",
+      "--name",
+      "旧快照节点",
+      "--context-token",
+      "context-4",
+      "--dry-run",
+    ],
+    env,
+  );
+  assert.equal(stale.code, 1);
+  assert.equal(stale.json.error.code, "PROJECT_STATE_CHANGED");
+  assert.equal(mock.nodeCreates(), 1);
+
+  const deletePreview = await run(
+    [
+      "node",
+      "delete",
+      "--project",
+      "Test",
+      "--node",
+      "渠道测试",
+      "--confirm-node",
+      "渠道测试",
+      "--dry-run",
+    ],
+    env,
+  );
+  assert.equal(deletePreview.code, 0);
+  assert.equal(deletePreview.json.data.canDelete, true);
+
+  const deleted = await run(
+    [
+      "node",
+      "delete",
+      "--project",
+      "Test",
+      "--node",
+      "渠道测试",
+      "--confirm-node",
+      "渠道测试",
+      "--idempotency-key",
+      "node-delete-key",
+    ],
+    env,
+  );
+  assert.equal(deleted.code, 0);
+  assert.equal(deleted.json.data.deletionId, "deletion-node-1");
+  assert.equal(deleted.json.data.verification, "delete-after-readback");
+  assert.equal(mock.nodeDeletes(), 1);
+
+  const restorePreview = await run(
+    [
+      "node",
+      "restore",
+      "--deletion-id",
+      "deletion-node-1",
+      "--confirm-node",
+      "渠道测试",
+      "--dry-run",
+    ],
+    env,
+  );
+  assert.equal(restorePreview.code, 0);
+  assert.equal(restorePreview.json.data.canRestore, true);
+
+  const restored = await run(
+    [
+      "node",
+      "restore",
+      "--deletion-id",
+      "deletion-node-1",
+      "--confirm-node",
+      "渠道测试",
+      "--idempotency-key",
+      "node-restore-key",
+    ],
+    env,
+  );
+  assert.equal(restored.code, 0);
+  assert.equal(restored.json.data.node.name, "渠道测试");
+  assert.equal(restored.json.data.verification, "restore-after-readback");
+  assert.equal(mock.nodeRestores(), 1);
 });
 
 test("task deletion previews, archives, reads trash, and restores by id", async (t) => {

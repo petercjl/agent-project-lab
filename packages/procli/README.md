@@ -33,6 +33,25 @@ procli task get --project "新品项目" --task "完成市场与竞品调研"
 
 `task get` 返回节点当前状态、状态历史、依赖、活动记录、Agent 运行、交付物、Wiki 元数据和通知。
 
+节点是看板中的阶段列。添加节点前先读取当前节点顺序，默认追加到末尾，也可以指定前后位置：
+
+```bash
+procli node create-context --project "新品项目" --json
+procli node create --project "新品项目" --name "产品定价" \
+  --after-node "市场调研" --context-token "<令牌>" \
+  --idempotency-key "<UUID>" --dry-run --json
+```
+
+删除节点会把节点、其中的任务、Wiki、附件和执行记录作为一个批次放入回收站。其他节点存在下游依赖时默认阻止；`detach` 必须由用户明确选择。有实质产出的节点只能由管理员删除：
+
+```bash
+procli node delete-context --project "新品项目" --node "产品定价" --json
+procli node delete --project "新品项目" --node "产品定价" \
+  --confirm-node "产品定价" --dependency-policy block --dry-run --json
+procli node restore --deletion-id "<deletionId>" \
+  --confirm-node "产品定价" --dry-run --json
+```
+
 添加任务需要先读取精简写前快照。预演和真实写入使用同一个 `contextToken` 和幂等键；如果期间网页端或其他 Agent 修改了项目，写入会返回 `PROJECT_STATE_CHANGED`：
 
 ```bash

@@ -1,7 +1,7 @@
 {
   "schemaVersion": "1",
   "name": "procli",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "defaultProfile": "nas",
   "capabilities": [
     {
@@ -41,6 +41,98 @@
         "targetVerification",
         "structuredJson"
       ]
+    },
+    {
+      "id": "node.create-context",
+      "command": "procli node create-context",
+      "effect": "read",
+      "risk": "low",
+      "requiredInputs": ["project"],
+      "optionalInputs": ["profile"],
+      "supports": [
+        "compactStateSnapshot",
+        "projectScopedVersion",
+        "contextToken",
+        "structuredJson"
+      ]
+    },
+    {
+      "id": "node.create",
+      "command": "procli node create",
+      "effect": "write",
+      "risk": "medium",
+      "requiredInputs": ["project", "name", "contextToken"],
+      "optionalInputs": [
+        "beforeNode",
+        "afterNode",
+        "profile",
+        "idempotencyKey"
+      ],
+      "supports": [
+        "prewriteContextSnapshot",
+        "serverDryRun",
+        "optimisticConcurrency",
+        "projectScopedVersion",
+        "idempotency",
+        "exactNodeResolution",
+        "orderedInsertion",
+        "postWriteReadback",
+        "structuredJson"
+      ],
+      "productionConfirmation": true
+    },
+    {
+      "id": "node.delete-context",
+      "command": "procli node delete-context",
+      "effect": "read",
+      "risk": "low",
+      "requiredInputs": ["project", "node"],
+      "optionalInputs": ["profile"],
+      "supports": [
+        "compactStateSnapshot",
+        "impactHash",
+        "contentPermission",
+        "structuredJson"
+      ]
+    },
+    {
+      "id": "node.delete",
+      "command": "procli node delete",
+      "effect": "recoverable-delete",
+      "risk": "high",
+      "requiredInputs": ["project", "node", "confirmNode"],
+      "optionalInputs": ["dependencyPolicy", "profile", "idempotencyKey"],
+      "supports": [
+        "serverDryRun",
+        "exactNameConfirmation",
+        "projectScopedOptimisticConcurrency",
+        "impactHash",
+        "dependencyPolicy",
+        "administratorContentDeletion",
+        "idempotency",
+        "recoverableDeletion",
+        "postWriteReadback",
+        "structuredJson"
+      ],
+      "productionConfirmation": true,
+      "confirmationRequired": true
+    },
+    {
+      "id": "node.restore",
+      "command": "procli node restore",
+      "effect": "write",
+      "risk": "high",
+      "requiredInputs": ["deletionId", "confirmNode"],
+      "optionalInputs": ["profile", "idempotencyKey"],
+      "supports": [
+        "dryRun",
+        "exactNameConfirmation",
+        "idempotency",
+        "postWriteReadback",
+        "structuredJson"
+      ],
+      "productionConfirmation": true,
+      "confirmationRequired": true
     },
     {
       "id": "task.create-context",

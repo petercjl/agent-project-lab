@@ -300,7 +300,13 @@ function App() {
         {},
       );
       if (!preview.canRestore) {
-        alert(`无法恢复：项目中已存在同名任务“${preview.conflict.title}”。`);
+        alert(
+          preview.conflict?.type === "node"
+            ? `无法恢复：项目中已存在同名节点“${preview.conflict.name}”。`
+            : preview.conflict?.type === "task"
+              ? `无法恢复：项目中已存在同名任务“${preview.conflict.items.map((item: any) => item.title).join("、")}”。`
+              : `无法恢复：项目中已存在同名任务“${preview.conflict.title}”。`,
+        );
         return;
       }
       RESTORE_TARGET(item);
@@ -313,14 +319,20 @@ function App() {
     }
   }
   async function confirmRestoreTask() {
-    if (!restoreTarget || restoreName !== restoreTarget.taskTitle) return;
+    const expectedName =
+      restoreTarget?.scopeType === "node"
+        ? restoreTarget.nodeName
+        : restoreTarget?.taskTitle;
+    if (!restoreTarget || restoreName !== expectedName) return;
     BUS(true);
     E("");
     try {
       await api(
         `/v1/trash/${encodeURIComponent(restoreTarget.id)}/restore`,
         "POST",
-        { confirmTask: restoreName },
+        restoreTarget.scopeType === "node"
+          ? { confirmNode: restoreName }
+          : { confirmTask: restoreName },
         { "idempotency-key": crypto.randomUUID() },
       );
       await refresh();
@@ -402,40 +414,63 @@ function App() {
   async function createStage() {
     const name = prompt("新节点名称，例如：渠道测试");
     if (!name?.trim()) return;
-    await act(() =>
-      api(
-        `/projects/${pid}/nodes`,
-        "POST",
-        { name: name.trim() },
-        { "idempotency-key": crypto.randomUUID() },
-      ),
-    );
+    await act(async () => {
+      const context = await api(`/v1/projects/${pid}/node-create-context`);
+      const body = { contextToken: context.contextToken, name: name.trim() };
+      await api(`/v1/projects/${pid}/nodes/preview`, "POST", body);
+      await api(`/v1/projects/${pid}/nodes`, "POST", body, {
+        "idempotency-key": crypto.randomUUID(),
+      });
+    });
   }
   async function deleteStage(stage: string) {
-    const stageTasks = tasks.filter((item: any) => item.stage === stage);
-    const blocked = stageTasks.filter(
-      (item: any) => item.contentStatus !== "empty",
-    );
-    if (blocked.length) {
-      alert(
-        `节点“${stage}”包含已有 Agent 执行记录或实质产出的任务，不能删除：${blocked
-          .map((item: any) => item.title)
-          .join("、")}`,
+    try {
+      const context = await api(
+        `/v1/projects/${pid}/nodes/${encodeURIComponent(stage)}/delete-context`,
       );
-      return;
+      if (
+        context.impact.node.contentTaskCount > 0 &&
+        !context.permissions.canDeleteWithContent
+      ) {
+        alert("该节点包含已有产出的任务，请联系管理员执行可恢复删除。");
+        return;
+      }
+      let dependencyPolicy = "block";
+      if (context.impact.dependents.length) {
+        if (
+          !confirm(
+            `其他节点有 ${context.impact.dependents.length} 个任务依赖这里的任务。继续将解除这些依赖，确认继续吗？`,
+          )
+        )
+          return;
+        dependencyPolicy = "detach";
+      }
+      const detail = context.impact.node.taskCount
+        ? `，同时归档其中 ${context.impact.node.taskCount} 个任务及其知识资料`
+        : "";
+      if (!confirm(`确认删除节点“${stage}”${detail}？删除后可在回收站恢复。`))
+        return;
+      const preview = await api(
+        `/v1/projects/${pid}/nodes/${encodeURIComponent(stage)}/delete-preview`,
+        "POST",
+        { contextToken: context.contextToken, dependencyPolicy },
+      );
+      await act(() =>
+        api(
+          `/v1/projects/${pid}/nodes/${encodeURIComponent(stage)}`,
+          "DELETE",
+          {
+            contextToken: context.contextToken,
+            impactHash: preview.impactHash,
+            confirmNode: stage,
+            dependencyPolicy,
+          },
+          { "idempotency-key": crypto.randomUUID() },
+        ),
+      );
+    } catch (error: any) {
+      E(error.message);
     }
-    const detail = stageTasks.length
-      ? `并删除其中 ${stageTasks.length} 个空任务`
-      : "";
-    if (!confirm(`确认删除节点“${stage}”${detail}？`)) return;
-    await act(() =>
-      api(
-        `/projects/${pid}/nodes/${encodeURIComponent(stage)}`,
-        "DELETE",
-        undefined,
-        { "idempotency-key": crypto.randomUUID() },
-      ),
-    );
   }
   async function deleteTask(taskToDelete: any) {
     try {
@@ -1053,7 +1088,7 @@ function App() {
               {homeOpen
                 ? `共 ${sortedProjects.length} 个项目，集中查看进度与最新动态。`
                 : trashOpen
-                  ? "查看已删除任务及其产出，并在保留期内恢复。"
+                  ? "查看已删除节点、任务及其产出，并在保留期内恢复。"
                   : p?.goal || "让 Agent 执行工作，让项目沉淀知识。"}
             </p>
           </div>
@@ -1101,8 +1136,10 @@ function App() {
           <section className="trash-page">
             <div className="trash-toolbar">
               <div>
-                <b>已删除任务</b>
-                <small>任务、Wiki、历史版本与附件按同一回收记录保留</small>
+                <b>回收站</b>
+                <small>
+                  节点、任务、Wiki、历史版本与附件按同一回收记录保留
+                </small>
               </div>
               <div className="view-switch" aria-label="回收站筛选">
                 <button
@@ -1138,7 +1175,10 @@ function App() {
                           >
                             {item.state === "completed" ? "可恢复" : "已恢复"}
                           </span>
-                          <h2>{item.taskTitle}</h2>
+                          <h2>{item.displayName || item.taskTitle}</h2>
+                          {item.scopeType === "node" && (
+                            <span className="trash-content-tag">节点</span>
+                          )}
                           {item.contentStatus !== "empty" && (
                             <span className="trash-content-tag">
                               含任务产出
@@ -1147,7 +1187,11 @@ function App() {
                         </div>
                         <p>
                           <b>{item.projectName}</b>
-                          {item.taskStage ? ` / ${item.taskStage}` : ""}
+                          {item.scopeType === "node"
+                            ? ` / ${item.taskCount} 个任务`
+                            : item.taskStage
+                              ? ` / ${item.taskStage}`
+                              : ""}
                         </p>
                         <div className="trash-meta">
                           <span>删除人：{item.requestedByName}</span>
@@ -1171,7 +1215,9 @@ function App() {
                             disabled={busy}
                             onClick={() => prepareRestoreTask(item)}
                           >
-                            恢复任务
+                            {item.scopeType === "node"
+                              ? "恢复节点"
+                              : "恢复任务"}
                           </button>
                         ) : (
                           <small>恢复于 {local(item.restoredAt)}</small>
@@ -1184,7 +1230,7 @@ function App() {
               <div className="home-empty trash-empty">
                 <div>⌫</div>
                 <h2>回收站是空的</h2>
-                <p>从任务详情删除的任务会显示在这里。</p>
+                <p>删除的节点和任务会显示在这里。</p>
               </div>
             )}
           </section>
@@ -2268,17 +2314,27 @@ function App() {
               <div className="modal-head">
                 <div>
                   <small>RECOVERABLE RESTORE</small>
-                  <h2>恢复任务</h2>
+                  <h2>
+                    {restoreTarget.scopeType === "node"
+                      ? "恢复节点"
+                      : "恢复任务"}
+                  </h2>
                 </div>
                 <button onClick={() => RESTORE_TARGET(null)}>×</button>
               </div>
               <div className="restore-summary">
-                <b>{restoreTarget.taskTitle}</b>
+                <b>
+                  {restoreTarget.scopeType === "node"
+                    ? restoreTarget.nodeName
+                    : restoreTarget.taskTitle}
+                </b>
                 <p>
                   将恢复到“{restorePreview.project.name}”
-                  {restoreTarget.taskStage
-                    ? ` / ${restoreTarget.taskStage}`
-                    : ""}
+                  {restoreTarget.scopeType === "node"
+                    ? ` / 原位置第 ${Number(restorePreview.node.order) + 1} 列`
+                    : restoreTarget.taskStage
+                      ? ` / ${restoreTarget.taskStage}`
+                      : ""}
                   。
                 </p>
                 <span>
@@ -2286,19 +2342,31 @@ function App() {
                 </span>
               </div>
               <label>
-                请输入完整任务名称以确认 <span>*</span>
+                请输入完整
+                {restoreTarget.scopeType === "node" ? "节点" : "任务"}
+                名称以确认 <span>*</span>
                 <input
                   autoFocus
                   value={restoreName}
                   onChange={(event) => RESTORE_NAME(event.target.value)}
-                  placeholder={restoreTarget.taskTitle}
+                  placeholder={
+                    restoreTarget.scopeType === "node"
+                      ? restoreTarget.nodeName
+                      : restoreTarget.taskTitle
+                  }
                 />
               </label>
               <div className="modal-actions">
                 <button onClick={() => RESTORE_TARGET(null)}>取消</button>
                 <button
                   className="primary"
-                  disabled={busy || restoreName !== restoreTarget.taskTitle}
+                  disabled={
+                    busy ||
+                    restoreName !==
+                      (restoreTarget.scopeType === "node"
+                        ? restoreTarget.nodeName
+                        : restoreTarget.taskTitle)
+                  }
                   onClick={confirmRestoreTask}
                 >
                   确认恢复

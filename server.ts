@@ -10,7 +10,6 @@ import {
   change,
   audit,
   writeFile,
-  removeFile,
   moveFile,
   safeFile,
   root,
@@ -230,6 +229,53 @@ const taskCreatePreview = (project: any, plan: any) => ({
       : null,
   },
 });
+const nodeCreatePlan = (project: any, body: any) => {
+  const name = required(body.name, "节点名称");
+  const key = stageNameKey(name);
+  if (project.stages.some((stage: string) => stageNameKey(stage) === key))
+    throw new Fault("STAGE_NAME_CONFLICT", `节点名称已存在：${name}`, 409);
+  if (project.stages.length >= 50)
+    throw new Fault("VALIDATION", "每个项目最多支持 50 个节点");
+  if (body.beforeNode && body.afterNode)
+    throw new Fault("VALIDATION", "--before-node 和 --after-node 不能同时使用");
+  const referenceName = body.beforeNode || body.afterNode || "";
+  let referenceNode: string | null = null;
+  let insertAt = project.stages.length;
+  if (referenceName) {
+    const referenceKey = stageNameKey(referenceName);
+    referenceNode =
+      project.stages.find(
+        (stage: string) => stageNameKey(stage) === referenceKey,
+      ) || null;
+    if (!referenceNode)
+      throw new Fault(
+        "POSITION_NODE_INVALID",
+        `定位节点不存在：${referenceName}`,
+        409,
+      );
+    insertAt = project.stages.indexOf(referenceNode) + (body.afterNode ? 1 : 0);
+  }
+  return {
+    name,
+    insertAt,
+    referenceNode,
+    position: body.beforeNode ? "before" : body.afterNode ? "after" : "append",
+  };
+};
+const nodeCreatePreview = (project: any, plan: any) => ({
+  project: {
+    id: project.id,
+    name: project.name,
+    projectVersion: projectVersion(project),
+  },
+  node: {
+    name: plan.name,
+    order: plan.insertAt,
+    position: plan.position,
+    referenceNode: plan.referenceNode,
+    taskCount: 0,
+  },
+});
 const requireProjectContext = (project: any, token: any) => {
   if (typeof token !== "string" || !token)
     throw new Fault("CONTEXT_TOKEN_REQUIRED", "缺少写前状态令牌", 409);
@@ -375,6 +421,109 @@ const taskDeleteImpact = async (
   };
   return { impact, records, dependents, hash: impactHash(impact) };
 };
+const nodeDeleteImpact = async (
+  state: any,
+  project: any,
+  nodeName: any,
+  dependencyPolicy = "block",
+) => {
+  if (!["block", "detach"].includes(dependencyPolicy))
+    throw new Fault("VALIDATION", "节点删除只支持 block 或 detach 依赖策略");
+  const key = stageNameKey(nodeName);
+  const node = project.stages.find(
+    (stage: string) => stageNameKey(stage) === key,
+  );
+  if (!node) throw new Fault("NODE_NOT_FOUND", `节点不存在：${nodeName}`, 404);
+  if (project.stages.length <= 1)
+    throw new Fault("LAST_NODE_REQUIRED", "项目至少需要保留一个节点", 409);
+  const allTasks = projectTasksInBoardOrder(state, project);
+  const tasks = allTasks.filter((task: any) => task.stage === node);
+  const taskIds = new Set(tasks.map((task: any) => task.id));
+  const dependents = allTasks.filter(
+    (task: any) =>
+      !taskIds.has(task.id) &&
+      task.dependencies.some((id: string) => taskIds.has(id)),
+  );
+  const records: any = {
+    events: [],
+    runs: [],
+    artifacts: [],
+    notifications: [],
+    measurements: [],
+    pages: [],
+  };
+  const files: any[] = [];
+  for (const task of tasks) {
+    const planned = await taskDeleteImpact(state, project, task);
+    for (const [recordType, items] of Object.entries(planned.records) as any)
+      records[recordType].push(...items);
+    files.push(...planned.impact.files);
+  }
+  for (const key of Object.keys(records)) {
+    const seen = new Set();
+    records[key] = records[key].filter((item: any) => {
+      if (seen.has(item.id)) return false;
+      seen.add(item.id);
+      return true;
+    });
+  }
+  const uniqueFiles = [
+    ...new Map(files.map((file) => [file.path, file])).values(),
+  ];
+  const contentTasks = tasks.filter(
+    (task: any) => taskContentStatus(state, task) !== "empty",
+  );
+  const impact = {
+    project: { id: project.id, name: project.name },
+    node: {
+      name: node,
+      order: project.stages.indexOf(node),
+      taskCount: tasks.length,
+      contentTaskCount: contentTasks.length,
+    },
+    tasks: tasks.map((task: any) => ({
+      id: task.id,
+      title: task.title,
+      status: task.status,
+      contentStatus: taskContentStatus(state, task),
+      boardOrder: task.boardOrder ?? 0,
+      version: task.version,
+    })),
+    dependents: dependents.map((task: any) => ({
+      id: task.id,
+      title: task.title,
+      dependencies: [...task.dependencies],
+      removedDependencyIds: task.dependencies.filter((id: string) =>
+        taskIds.has(id),
+      ),
+    })),
+    dependencyPolicy,
+    records: Object.fromEntries(
+      Object.entries(records).map(([recordType, items]: any) => [
+        recordType,
+        items.length,
+      ]),
+    ),
+    files: uniqueFiles,
+    knowledge: {
+      provider: "local-markdown",
+      recoverable: true,
+      exclusive: records.pages.length + records.artifacts.length,
+      shared: 0,
+      external: 0,
+    },
+    retentionDays: 90,
+  };
+  return {
+    node,
+    tasks,
+    records,
+    dependents,
+    contentTasks,
+    impact,
+    hash: impactHash(impact),
+  };
+};
 async function rebuildWikiIndex(state: any, project: any) {
   await writeFile(
     project.id,
@@ -461,46 +610,6 @@ async function createTaskFromPlan(
     source,
   });
   return task;
-}
-async function removeEmptyTasks(state: any, tasks: any[], who: string) {
-  const blocked = tasks.filter(
-    (task: any) => taskContentStatus(state, task) !== "empty",
-  );
-  if (blocked.length)
-    throw new Fault(
-      "TASK_HAS_CONTENT",
-      `已有 Agent 执行记录或实质产出，不能删除：${blocked
-        .map((task: any) => task.title)
-        .join("、")}`,
-      409,
-    );
-  const ids = new Set(tasks.map((task: any) => task.id));
-  const wikiPaths = new Set(tasks.map((task: any) => task.wikiPath));
-  for (const task of tasks) await removeFile(task.projectId, task.wikiPath);
-  state.tasks = state.tasks.filter((task: any) => !ids.has(task.id));
-  state.pages = state.pages.filter(
-    (page: any) =>
-      !tasks.some(
-        (task: any) =>
-          page.projectId === task.projectId && wikiPaths.has(page.path),
-      ),
-  );
-  state.notifications = state.notifications.filter(
-    (notification: any) => !ids.has(notification.taskId),
-  );
-  for (const task of state.tasks) {
-    const next = task.dependencies.filter((id: string) => !ids.has(id));
-    if (next.length !== task.dependencies.length) {
-      task.dependencies = next;
-      task.version++;
-      task.updatedAt = now();
-    }
-  }
-  return tasks.map((task: any) => ({
-    id: task.id,
-    title: task.title,
-    deletedBy: who,
-  }));
 }
 const requireAdmin = (req: any) => {
   if (req.auth?.systemRole !== "admin")
@@ -613,7 +722,12 @@ route("get", "/api/capabilities", () => ({
     "project.export",
     "project.restore",
     "project.node.create",
-    "project.node.delete-empty",
+    "project.node.create-context",
+    "project.node.create-preview",
+    "project.node.delete-context",
+    "project.node.delete-preview",
+    "project.node.delete-recoverable",
+    "project.node.restore",
     "project.board.reorder",
     "task.create",
     "task.delete-context",
@@ -1171,6 +1285,103 @@ route("get", "/api/v1/projects/:id/tasks", async (req) => {
     })),
   };
 });
+route("get", "/api/v1/projects/:id/node-create-context", async (req) => {
+  const s: any = await read();
+  const project = activeProject(s.projects, req.params.id);
+  const tasks = projectTasksInBoardOrder(s, project);
+  return {
+    project: {
+      id: project.id,
+      name: project.name,
+      type: project.type,
+      status: project.status,
+      projectVersion: projectVersion(project),
+      updatedAt: project.updatedAt || project.createdAt,
+    },
+    contextToken: projectContextToken(project),
+    nodes: project.stages.map((name: string, order: number) => ({
+      name,
+      order,
+      taskCount: tasks.filter((task: any) => task.stage === name).length,
+      contentTaskCount: tasks.filter(
+        (task: any) =>
+          task.stage === name && taskContentStatus(s, task) !== "empty",
+      ).length,
+    })),
+    constraints: {
+      maxNodes: 50,
+      minNodes: 1,
+      nodeNameUnique: true,
+      defaultPosition: "project-end",
+    },
+  };
+});
+route("post", "/api/v1/projects/:id/nodes/preview", async (req) => {
+  const s: any = await read();
+  const project = activeProject(s.projects, req.params.id);
+  requireProjectContext(project, req.body.contextToken);
+  const plan = nodeCreatePlan(project, req.body);
+  return {
+    dryRun: true,
+    contextToken: req.body.contextToken,
+    ...nodeCreatePreview(project, plan),
+  };
+});
+route("post", "/api/v1/projects/:id/nodes", (req) =>
+  mutate(req, (s: any, who: string) => {
+    const project = activeProject(s.projects, req.params.id);
+    requireProjectContext(project, req.body.contextToken);
+    const plan = nodeCreatePlan(project, req.body);
+    project.stages.splice(plan.insertAt, 0, plan.name);
+    audit(s, who, "node.created", project.id, {
+      name: plan.name,
+      order: plan.insertAt,
+      position: plan.position,
+      referenceNode: plan.referenceNode,
+      source: requestSource(req),
+    });
+    return {
+      project: {
+        id: project.id,
+        name: project.name,
+        projectVersion: projectVersion(project),
+      },
+      node: {
+        name: plan.name,
+        order: project.stages.indexOf(plan.name),
+        taskCount: 0,
+      },
+      audit: { event: "node.created", actor: who },
+    };
+  }),
+);
+route("get", "/api/v1/projects/:id/nodes/by-name", async (req) => {
+  const s: any = await read();
+  const project = activeProject(s.projects, req.params.id);
+  const key = stageNameKey(req.query.name);
+  const node = project.stages.find(
+    (stage: string) => stageNameKey(stage) === key,
+  );
+  if (!node) throw new Fault("NODE_NOT_FOUND", "节点不存在", 404);
+  const tasks = projectTasksInBoardOrder(s, project).filter(
+    (task: any) => task.stage === node,
+  );
+  return {
+    project: {
+      id: project.id,
+      name: project.name,
+      projectVersion: projectVersion(project),
+    },
+    node: {
+      name: node,
+      order: project.stages.indexOf(node),
+      taskCount: tasks.length,
+      contentTaskCount: tasks.filter(
+        (task: any) => taskContentStatus(s, task) !== "empty",
+      ).length,
+    },
+  };
+});
 route("get", "/api/v1/projects/:id/task-create-context", async (req) => {
   const s: any = await read();
   const project = activeProject(s.projects, req.params.id);
@@ -1525,6 +1736,190 @@ route("delete", "/api/v1/projects/:id/tasks/:taskId", (req) =>
     };
   }),
 );
+route("get", "/api/v1/projects/:id/nodes/:node/delete-context", async (req) => {
+  const s: any = await read();
+  const project = activeProject(s.projects, req.params.id);
+  const planned = await nodeDeleteImpact(s, project, req.params.node);
+  return {
+    project: {
+      id: project.id,
+      name: project.name,
+      projectVersion: projectVersion(project),
+    },
+    node: planned.impact.node,
+    contextToken: projectContextToken(project),
+    permissions: {
+      canDeleteEmpty: true,
+      canDeleteWithContent: req.auth?.systemRole === "admin",
+      systemRole: req.auth?.systemRole || "member",
+    },
+    impact: planned.impact,
+    impactHash: planned.hash,
+  };
+});
+route(
+  "post",
+  "/api/v1/projects/:id/nodes/:node/delete-preview",
+  async (req) => {
+    const s: any = await read();
+    const project = activeProject(s.projects, req.params.id);
+    requireProjectContext(project, req.body.contextToken);
+    const policy = req.body.dependencyPolicy || "block";
+    const planned = await nodeDeleteImpact(s, project, req.params.node, policy);
+    return {
+      dryRun: true,
+      contextToken: req.body.contextToken,
+      impactHash: planned.hash,
+      canDelete: !planned.dependents.length || policy === "detach",
+      permissions: {
+        requiresAdmin: planned.contentTasks.length > 0,
+        canDeleteWithContent: req.auth?.systemRole === "admin",
+      },
+      impact: planned.impact,
+    };
+  },
+);
+route("delete", "/api/v1/projects/:id/nodes/:node", (req) =>
+  mutate(req, async (s: any, who: string) => {
+    const project = activeProject(s.projects, req.params.id);
+    requireProjectContext(project, req.body.contextToken);
+    const policy = req.body.dependencyPolicy || "block";
+    const planned = await nodeDeleteImpact(s, project, req.params.node, policy);
+    if (req.body.confirmNode !== planned.node)
+      throw new Fault(
+        "DELETE_CONFIRMATION_MISMATCH",
+        "确认节点名称必须与当前节点名称完全一致",
+        409,
+      );
+    if (req.body.impactHash !== planned.hash)
+      throw new Fault(
+        "DELETE_SCOPE_CHANGED",
+        "删除影响范围已变化，请重新预演并确认",
+        409,
+      );
+    if (planned.contentTasks.length) requireAdmin(req);
+    if (planned.dependents.length && policy === "block")
+      throw new Fault(
+        "DEPENDENTS_EXIST",
+        "其他节点存在依赖这些任务的下游任务，请明确选择 detach",
+        409,
+      );
+    const deletionId = uid();
+    const deletedAt = now();
+    const retentionUntil = new Date(
+      Date.parse(deletedAt) + 90 * 24 * 60 * 60 * 1000,
+    ).toISOString();
+    const taskIds = new Set(planned.tasks.map((task: any) => task.id));
+    const dependentSnapshots = planned.dependents.map((task: any) => ({
+      id: task.id,
+      dependencies: [...task.dependencies],
+    }));
+    for (const dependent of planned.dependents) {
+      dependent.dependencies = dependent.dependencies.filter(
+        (id: string) => !taskIds.has(id),
+      );
+      dependent.version = Number(dependent.version || 0) + 1;
+      dependent.updatedAt = deletedAt;
+    }
+    const movedFiles = [];
+    for (const file of planned.impact.files) {
+      if (file.missing) continue;
+      const destination = `wiki/recycle/${deletionId}/files/${file.path}`;
+      await moveFile(project.id, file.path, destination);
+      movedFiles.push({ ...file, destination });
+    }
+    const taskSnapshots = planned.tasks.map((task: any) =>
+      JSON.parse(JSON.stringify(task)),
+    );
+    for (const task of planned.tasks) {
+      task.deletedAt = deletedAt;
+      task.deletedBy = who;
+      task.deletionId = deletionId;
+      task.deletionState = "completed";
+    }
+    const recordIds: any = {};
+    for (const [recordType, records] of Object.entries(
+      planned.records,
+    ) as any) {
+      recordIds[recordType] = records.map((record: any) => record.id);
+      if (recordType === "events") continue;
+      for (const record of records) {
+        record.deletedAt = deletedAt;
+        record.deletionId = deletionId;
+      }
+    }
+    project.stages = project.stages.filter(
+      (stage: string) => stage !== planned.node,
+    );
+    const manifest = {
+      version: 1,
+      deletionId,
+      projectId: project.id,
+      node: {
+        name: planned.node,
+        order: planned.impact.node.order,
+      },
+      tasks: taskSnapshots,
+      impact: planned.impact,
+      impactHash: planned.hash,
+      dependentSnapshots,
+      recordIds,
+      files: movedFiles,
+      requestedBy: who,
+      deletedAt,
+      retentionUntil,
+    };
+    const manifestPath = `wiki/recycle/${deletionId}/manifest.json`;
+    await writeFile(
+      project.id,
+      manifestPath,
+      JSON.stringify(manifest, null, 2),
+    );
+    const batch = {
+      id: deletionId,
+      projectId: project.id,
+      scopeType: "node",
+      scopeId: planned.node,
+      nodeName: planned.node,
+      taskTitle: planned.node,
+      state: "completed",
+      impactHash: planned.hash,
+      manifestPath,
+      manifest,
+      requestedBy: who,
+      createdAt: deletedAt,
+      updatedAt: deletedAt,
+      retentionUntil,
+    };
+    s.deletionBatches ||= [];
+    s.deletionBatches.push(batch);
+    await rebuildWikiIndex(s, project);
+    audit(s, who, "node.deleted", project.id, {
+      name: planned.node,
+      deletionId,
+      taskIds: [...taskIds],
+      dependencyPolicy: policy,
+    });
+    return {
+      deletionId,
+      state: batch.state,
+      project: {
+        id: project.id,
+        name: project.name,
+        projectVersion: projectVersion(project),
+      },
+      node: {
+        name: planned.node,
+        order: planned.impact.node.order,
+        deletedAt,
+      },
+      taskCount: planned.tasks.length,
+      manifestPath,
+      retentionUntil,
+      verification: "delete-after-readback",
+    };
+  }),
+);
 route("get", "/api/v1/trash", async (req: any) => {
   const s: any = await read();
   const projectId = String(req.query.projectId || "");
@@ -1539,6 +1934,8 @@ route("get", "/api/v1/trash", async (req: any) => {
       );
       const task = item.manifest?.task || {};
       const impact = item.manifest?.impact || {};
+      const nodeName = item.nodeName || item.manifest?.node?.name || "";
+      const isNode = item.scopeType === "node";
       return {
         id: item.id,
         projectId: item.projectId,
@@ -1546,10 +1943,18 @@ route("get", "/api/v1/trash", async (req: any) => {
         scopeType: item.scopeType,
         scopeId: item.scopeId,
         taskTitle: item.taskTitle,
+        nodeName,
+        displayName: isNode ? nodeName : item.taskTitle,
+        taskCount: isNode
+          ? item.manifest?.tasks?.length || impact.node?.taskCount || 0
+          : 1,
         taskStage: task.stage || impact.task?.stage || "",
         taskStatus: task.status || impact.task?.status || "",
-        contentStatus:
-          impact.task?.contentStatus || task.contentStatus || "empty",
+        contentStatus: isNode
+          ? Number(impact.node?.contentTaskCount || 0) > 0
+            ? "substantive"
+            : "empty"
+          : impact.task?.contentStatus || task.contentStatus || "empty",
         state: item.state,
         requestedBy: item.requestedBy,
         requestedByName: requestedBy?.name || item.requestedBy,
@@ -1581,6 +1986,38 @@ route("post", "/api/v1/trash/:deletionId/restore-preview", async (req) => {
   if (batch.state !== "completed")
     throw new Fault("INVALID_RESTORE_STATE", "当前回收记录不能恢复", 409);
   const project = activeProject(s.projects, batch.projectId);
+  if (batch.scopeType === "node") {
+    const nodeName = batch.manifest.node.name;
+    const nodeConflict = project.stages.find(
+      (stage: string) => stageNameKey(stage) === stageNameKey(nodeName),
+    );
+    const activeTasks = projectTasksInBoardOrder(s, project);
+    const taskConflicts = batch.manifest.tasks
+      .map((saved: any) =>
+        activeTasks.find(
+          (task: any) => taskNameKey(task.title) === taskNameKey(saved.title),
+        ),
+      )
+      .filter(Boolean)
+      .map((task: any) => ({ id: task.id, title: task.title }));
+    return {
+      dryRun: true,
+      deletionId: batch.id,
+      project: { id: project.id, name: project.name },
+      node: {
+        name: nodeName,
+        order: batch.manifest.node.order,
+        taskCount: batch.manifest.tasks.length,
+      },
+      canRestore: !nodeConflict && !taskConflicts.length,
+      conflict: nodeConflict
+        ? { type: "node", name: nodeConflict }
+        : taskConflicts.length
+          ? { type: "task", items: taskConflicts }
+          : null,
+      files: batch.manifest.files,
+    };
+  }
   const conflict = projectTasksInBoardOrder(s, project).find(
     (item: any) => taskNameKey(item.title) === taskNameKey(batch.taskTitle),
   );
@@ -1604,6 +2041,135 @@ route("post", "/api/v1/trash/:deletionId/restore", (req) =>
     if (batch.state === "restored") return batch.restoreResult;
     if (batch.state !== "completed")
       throw new Fault("INVALID_RESTORE_STATE", "当前回收记录不能恢复", 409);
+    if (batch.scopeType === "node") {
+      const nodeName = batch.manifest.node.name;
+      if (req.body.confirmNode !== nodeName)
+        throw new Fault(
+          "RESTORE_CONFIRMATION_MISMATCH",
+          "确认节点名称必须与回收记录完全一致",
+          409,
+        );
+      const project = activeProject(s.projects, batch.projectId);
+      if (
+        project.stages.some(
+          (stage: string) => stageNameKey(stage) === stageNameKey(nodeName),
+        )
+      )
+        throw new Fault("RESTORE_CONFLICT", "项目中已存在同名节点", 409);
+      const activeTasks = projectTasksInBoardOrder(s, project);
+      const taskConflict = batch.manifest.tasks.find((saved: any) =>
+        activeTasks.some(
+          (task: any) => taskNameKey(task.title) === taskNameKey(saved.title),
+        ),
+      );
+      if (taskConflict)
+        throw new Fault(
+          "RESTORE_CONFLICT",
+          `项目中已存在同名活动任务：${taskConflict.title}`,
+          409,
+        );
+      for (const file of batch.manifest.files) {
+        try {
+          await fs.access(await safeFile(project.id, file.path));
+          throw new Fault(
+            "RESTORE_CONFLICT",
+            `恢复目标已存在：${file.path}`,
+            409,
+          );
+        } catch (error: any) {
+          if (error instanceof Fault) throw error;
+          if (error.code !== "ENOENT") throw error;
+        }
+      }
+      for (const file of batch.manifest.files) {
+        await moveFile(project.id, file.destination, file.path);
+        const content = await fs.readFile(
+          await safeFile(project.id, file.path),
+        );
+        if (createHash("sha256").update(content).digest("hex") !== file.sha256)
+          throw new Fault(
+            "FILE_INTEGRITY",
+            `恢复文件校验失败：${file.path}`,
+            409,
+          );
+      }
+      const restoredTasks = [];
+      for (const snapshot of batch.manifest.tasks) {
+        const task = get(s.tasks, snapshot.id, "回收任务");
+        Object.assign(task, snapshot);
+        delete task.deletedAt;
+        delete task.deletedBy;
+        delete task.deletionId;
+        delete task.deletionState;
+        restoredTasks.push(task);
+      }
+      for (const task of restoredTasks)
+        task.dependencies = task.dependencies.filter((id: string) =>
+          s.tasks.some(
+            (candidate: any) => candidate.id === id && !candidate.deletedAt,
+          ),
+        );
+      for (const [recordType, ids] of Object.entries(
+        batch.manifest.recordIds,
+      ) as any) {
+        if (recordType === "events") continue;
+        for (const id of ids) {
+          const record = s[recordType].find((item: any) => item.id === id);
+          if (record) {
+            delete record.deletedAt;
+            delete record.deletionId;
+          }
+        }
+      }
+      const warnings = [];
+      project.stages.splice(
+        Math.min(batch.manifest.node.order, project.stages.length),
+        0,
+        nodeName,
+      );
+      for (const saved of batch.manifest.dependentSnapshots) {
+        const dependent = s.tasks.find(
+          (task: any) => task.id === saved.id && !task.deletedAt,
+        );
+        if (!dependent) {
+          warnings.push(`下游任务已不存在：${saved.id}`);
+          continue;
+        }
+        dependent.dependencies = saved.dependencies.filter((id: string) =>
+          s.tasks.some((task: any) => task.id === id && !task.deletedAt),
+        );
+        dependent.version = Number(dependent.version || 0) + 1;
+        dependent.updatedAt = now();
+      }
+      batch.state = "restored";
+      batch.restoredAt = now();
+      batch.restoredBy = who;
+      batch.updatedAt = batch.restoredAt;
+      await rebuildWikiIndex(s, project);
+      audit(s, who, "node.restored", project.id, {
+        name: nodeName,
+        deletionId: batch.id,
+        taskIds: restoredTasks.map((task: any) => task.id),
+        warnings,
+      });
+      batch.restoreResult = {
+        deletionId: batch.id,
+        state: batch.state,
+        project: {
+          id: project.id,
+          name: project.name,
+          projectVersion: projectVersion(project),
+        },
+        node: {
+          name: nodeName,
+          order: project.stages.indexOf(nodeName),
+          taskCount: restoredTasks.length,
+        },
+        warnings,
+        verification: "restore-after-readback",
+      };
+      return batch.restoreResult;
+    }
     if (req.body.confirmTask !== batch.taskTitle)
       throw new Fault(
         "RESTORE_CONFIRMATION_MISMATCH",
@@ -1699,44 +2265,20 @@ route("post", "/api/v1/trash/:deletionId/restore", (req) =>
     return batch.restoreResult;
   }),
 );
-route("post", "/api/projects/:id/nodes", (req) =>
-  mutate(req, (s: any, who: string) => {
-    const project = activeProject(s.projects, req.params.id);
-    const name = required(req.body.name, "节点名称");
-    const key = stageNameKey(name);
-    if (project.stages.some((stage: string) => stageNameKey(stage) === key))
-      throw new Fault("STAGE_NAME_CONFLICT", `节点名称已存在：${name}`, 409);
-    if (project.stages.length >= 50)
-      throw new Fault("VALIDATION", "每个项目最多支持 50 个节点");
-    project.stages.push(name);
-    audit(s, who, "node.created", project.id, { name });
-    return { projectId: project.id, name, taskCount: 0 };
-  }),
-);
-route("delete", "/api/projects/:id/nodes/:stage", (req) =>
-  mutate(req, async (s: any, who: string) => {
-    const project = activeProject(s.projects, req.params.id);
-    const key = stageNameKey(req.params.stage);
-    const stage = project.stages.find(
-      (item: string) => stageNameKey(item) === key,
-    );
-    if (!stage) throw new Fault("NOT_FOUND", "节点不存在", 404);
-    const tasks = s.tasks.filter(
-      (task: any) => task.projectId === project.id && task.stage === stage,
-    );
-    const deletedTasks = await removeEmptyTasks(s, tasks, who);
-    project.stages = project.stages.filter((item: string) => item !== stage);
-    audit(s, who, "node.deleted", project.id, {
-      name: stage,
-      deletedTasks,
-    });
-    return {
-      projectId: project.id,
-      name: stage,
-      deletedTaskCount: deletedTasks.length,
-    };
-  }),
-);
+route("post", "/api/projects/:id/nodes", () => {
+  throw new Fault(
+    "API_DEPRECATED",
+    "请使用带写前快照和预演的 /api/v1/projects/:id/nodes 接口",
+    410,
+  );
+});
+route("delete", "/api/projects/:id/nodes/:stage", () => {
+  throw new Fault(
+    "API_DEPRECATED",
+    "请使用可恢复删除接口 /api/v1/projects/:id/nodes/:node",
+    410,
+  );
+});
 route("put", "/api/projects/:id/board/order", (req) =>
   mutate(req, (s: any, who: string) => {
     const project = activeProject(s.projects, req.params.id);
