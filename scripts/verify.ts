@@ -396,9 +396,8 @@ try {
   const procliHome = await fs.mkdtemp(path.join(os.tmpdir(), "procli-verify-"));
   const procliConfig = path.join(procliHome, "config.json");
   execFileSync(
-    process.execPath,
+    "procli",
     [
-      "packages/procli/bin/procli.mjs",
       "profile",
       "add",
       "local",
@@ -415,9 +414,8 @@ try {
   const revisionBeforeCliReads = (await ok("/state")).revision;
   const cliDirectory = JSON.parse(
     execFileSync(
-      process.execPath,
+      "procli",
       [
-        "packages/procli/bin/procli.mjs",
         "--profile",
         "local",
         "directory",
@@ -435,9 +433,8 @@ try {
   );
   const cliTaskList = JSON.parse(
     execFileSync(
-      process.execPath,
+      "procli",
       [
-        "packages/procli/bin/procli.mjs",
         "--profile",
         "local",
         "task",
@@ -454,9 +451,8 @@ try {
   assert.equal(cliTaskList.data.count, 7);
   const cliTaskDetail = JSON.parse(
     execFileSync(
-      process.execPath,
+      "procli",
       [
-        "packages/procli/bin/procli.mjs",
         "--profile",
         "local",
         "task",
@@ -478,9 +474,8 @@ try {
   checks += 5;
   const dry = JSON.parse(
     execFileSync(
-      process.execPath,
+      "procli",
       [
-        "packages/procli/bin/procli.mjs",
         "--profile",
         "local",
         "project",
@@ -500,9 +495,8 @@ try {
   checks++;
   const createdByCli = JSON.parse(
     execFileSync(
-      process.execPath,
+      "procli",
       [
-        "packages/procli/bin/procli.mjs",
         "--profile",
         "local",
         "project",

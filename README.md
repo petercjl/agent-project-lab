@@ -33,7 +33,7 @@ npm start
 
 终端保持运行即可。停止页面服务按 Ctrl+C；数据库继续运行，数据保留。重启页面服务再次执行 `npm start`。开发时使用 `npm run dev`。
 
-安装依赖使用 `npm ci`。仓库内开发 CLI 可执行 `npm install -g ./packages/procli`；正式使用可从 npm 安装 `npm install -g @petercjl/procli`。已安装 PostgreSQL 17.9，独立数据库集群在 `data/postgres`，监听 `127.0.0.1:55432`，数据库名 `project_lab`。没有启动或占用 Homebrew 默认的 5432 数据库服务。
+安装依赖使用 `npm ci`。项目管理 CLI 是独立发布的系统工具，使用 `npm install -g @petercjl/procli` 安装；CLI 与配套 Skill 的源码由独立的 `petercjl/procli` 仓库维护。已安装 PostgreSQL 17.9，独立数据库集群在 `data/postgres`，监听 `127.0.0.1:55432`，数据库名 `project_lab`。没有启动或占用 Homebrew 默认的 5432 数据库服务。
 
 `npm run db` 只初始化专属的空目录；若目标目录存在但不是已知集群，会拒绝初始化。自定义 PostgreSQL 工具路径可设置 `PG_BIN`。本地集群使用回环地址 trust 认证，适合可信的单用户电脑；同机其他用户仍可能连接。
 
